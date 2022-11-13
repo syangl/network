@@ -4,11 +4,10 @@
 #include<string>
 #include<stdint.h>
 #include<WinSock2.h>
-#include "UDPHead.h"
+#include "UDPPackage.h"
 using namespace std;
 
-
-
+int sendLen = BUFSIZE;
 
 int main(){
     //start
@@ -51,19 +50,76 @@ int main(){
     }
 
     sockaddr_in addrClient;
-	char recvBuf[1024];
-	char sendBuf[1024];
+	// char recvBuf[BUFSIZE];
+	// char sendBuf[BUFSIZE];
+    UDPPackage *rpkg; initUDPPackage(rpkg);//收
+    UDPPackage *spkg; initUDPPackage(spkg);//发
     int len = sizeof(SOCKADDR);
-    int sendlen = 1024;
+    int SENDLEN = sizeof(BUFSIZE);
 
-    //TODO:
-    while(1){
-        recvfrom(sockSrv, recvBuf, 1024, 0, (SOCKADDR*)&addrClient, &len);
-        // TODO:
-
-
-        sendto(sockSrv, sendBuf, sendlen, 0, (SOCKADDR*)&addrClient, len);
-    }
+    int state = 0;
+    bool CONNECT = true;
+    // memset(recvBuf, 0, BUFSIZE);
+    // memset(sendBuf, 0, BUFSIZE);
+    int retlen = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len); //收到客户端请求建连
+    if (retlen && rpkg->FLAG == SYN){
+        while (CONNECT){
+            switch (state){
+                case 0: //回复确认
+                    initUDPPackage(spkg);
+                    spkg->FLAG = SYNACK;
+                    spkg->Length = sendLen;
+                    sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, len);
+                    state = 1;
+                    break;
+                case 1: //等待连接
+                    int retsize = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
+                    if (retsize < 0){
+                        //TODO：
+                    }
+                    else{ //传输文件
+                        if (rpkg->FLAG == ACK){
+                            initUDPPackage(rpkg);
+                            initUDPPackage(spkg);
+                            // TODO：读文件到spkg
+                            char tmptest[10] = {1,2,3,4,5,6,7,8,9,10};//临时测试
+                            memcpy(spkg->data, tmptest, sizeof(tmptest));
+                            spkg->Length = 10;
+                            spkg->seq = (SEQ++)%(BUFSIZE-1)+1;
+                            sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, len);
+                            state = 2;
+                        }
+                    }
+                    break;
+                case 2: //传输完毕，单向传输，挥手
+                    initUDPPackage(spkg);
+                    spkg->FLAG = FIN;
+                    sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, len);
+                    CONNECT = false;
+                    state = 0;
+                    break;
+                // case 2: //两次挥手，等待客户端FIN，收到断开
+                //     int retsize = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
+                //     if (retsize < 0){
+                //         //TODO：
+                //     }
+                //     else{
+                //         if (rpkg->FLAG == FIN){
+                //             initUDPPackage(rpkg);
+                //             initUDPPackage(spkg);
+                //             spkg->FLAG = FINACK;
+                //             sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, len);
+                //             CONNECT = false;
+                //             state = 0;
+                //             break;
+                //         }
+                //     }
+                //     break;
+                default:
+                    break;
+            }//switch
+        }//while
+    }//if
 
     closesocket(sockSrv);
     wprintf(L"{---Server socket closed!}\n");
