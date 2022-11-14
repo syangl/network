@@ -9,8 +9,7 @@ using namespace std;
 #define ACK 1
 #define FIN 10
 
-
-// int SEQ = 0;
+#define SENTPACKSIZE 1024
 
 struct UDPPackage
 {//首部16字节
@@ -21,7 +20,7 @@ struct UDPPackage
     uint16_t WINDOWSIZE;
     uint16_t Length; //不包含首部，data字节数
     uint16_t Checksum;
-    char data[BUFSIZE];
+    char data[BUFSIZE];//3-1还没有实现缓冲区，发一次就写一次文件
 };
 
 void initUDPPackage(UDPPackage *u){
@@ -35,29 +34,7 @@ void initUDPPackage(UDPPackage *u){
     memset(u->data, 0, BUFSIZE);
 }
 
-// string pack(UDPPackage u) {
-//     char s[1040];
-//     s = u.seq;s += "\n";
-//     s += u.ack;s += "\n";
-//     s += u.FLAG;s += "\n";
-//     s += u.NOTUSED;s += "\n";
-//     s += u.WINDOWSIZE;s += "\n";
-//     s += u.Length;s += "\n";
-//     s += u.Checksum;s += "\n";
-//     int i = 0;
-//     while(s[i] != '\n') ++i;
-//     //
-//     return (string)s;
-// }
-
-// UDPPackage unPack(string s){
-//     UDPPackage u;
-//     u.seq = s.substr();
-//     u.ack = ;
-//     u.FLAG = ;
-//     u.NOTUSED = ;
-//     u.WINDOWSIZE = ;
-//     u.Length = ;
-//     u.Checksum = ;
-//     return u;
-// }
+uint16_t checksumFunc(){
+    //TODO
+    return (uint16_t)0;
+}

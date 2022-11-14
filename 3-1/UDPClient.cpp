@@ -5,9 +5,8 @@
 #include<stdint.h>
 #include<WinSock2.h>
 #include "UDPPackage.h"
+#include<fstream>
 using namespace std;
-
-int totalLen = 0;
 
 int state = 0;
 
@@ -38,8 +37,6 @@ int main(){
     addrSrv.sin_addr.s_addr = inet_addr("127.0.0.1");
     addrSrv.sin_port = htons(8000);
 
-    // char recvBuf[BUFSIZE];
-	// char sendBuf[BUFSIZE];
     UDPPackage *rpkg = new UDPPackage(); initUDPPackage(rpkg);//收
     UDPPackage *spkg = new UDPPackage(); initUDPPackage(spkg);//发
     int seq = 0, ack = 0; //client seq, ack, can be random only at init
@@ -54,17 +51,18 @@ int main(){
     sendto(sockClient, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrSrv, len);
     printf("[log] client to server SYN, seq=%d\n", spkg->seq);
     while(CONNECT){
+        ofstream outfile;
         switch (state){
             case 0://等待回复SYNACK，收到发送ACK
                 recvret = recvfrom(sockClient, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrSrv, &len);
                 if (recvret < 0){
-                        //TODO：
-                        printf("[log] client recvfrom fail\n");
+                    printf("[log] client recvfrom fail\n");
+                    CONNECT = false;
+                    state = 0;
                 }
                 else{
-                    ack = rpkg->seq + 1;
+                    ack = (rpkg->seq%(BUFSIZE-1)+1);
                     printf("[log] server to client SYN,ACK, seq=%d,ack=%d\n",rpkg->seq,rpkg->ack);
-                    totalLen = rpkg->Length;
                     initUDPPackage(rpkg);
                     initUDPPackage(spkg);
                     spkg->FLAG = ACK;
@@ -77,23 +75,47 @@ int main(){
                 break;
             case 1: //接收文件，在此状态下不停接收，完毕后状态跳转
                 recvret = recvfrom(sockClient, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrSrv, &len);
-                if (recvret < 0){
-                    printf("[log] client recvfrom fail\n");
-                    CONNECT = false;
-                    state = 0;
+                if (recvret <= 0){
+                    //printf("[log] client recvfrom fail\n");
+                    //CONNECT = false;
+                    //state = 0;
+                    //do nothing
                 }
                 else if (rpkg->FLAG == FIN){
-                    ack = rpkg->seq + 1;
+                    ack = (rpkg->seq%(BUFSIZE-1)+1);
                     state = 2;
                 }
                 else{
-                    ack = rpkg->seq + 1;
-                    printf("[log] start receive files\n");
-                    // TODO: 文件写入
-                    //临时测试
-                    printf("test recv: %s\n", rpkg->data);
+                    if (ack == rpkg->seq && !checksumFunc()){//没错
+                        ack = (rpkg->seq%(BUFSIZE-1)+1);
+                        printf("[log] server to client file data, seq=%d\n",rpkg->seq);
+                        //文件写入
+                        outfile.open("output/1.jpg", ofstream::out | ios::binary | ios::app);
+                        if (!outfile){
+	                        printf("[log] open file error");
+                            CONNECT = false;
+                            state = 0;
+                        }
+                        outfile.write(rpkg->data, rpkg->Length);
+                        outfile.close();
 
-                    printf("[log] receive files done\n");
+                        initUDPPackage(spkg);
+                        spkg->FLAG = ACK;
+                        spkg->seq = (seq++)%(BUFSIZE-1)+1;
+                        spkg->ack = ack;
+                        spkg->Checksum = checksumFunc();
+                        sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
+                        printf("[log] client to server ACK, seq=%d,ack=%d\n", spkg->seq, spkg->ack);
+                    }
+                    else{//有错重传
+                        initUDPPackage(spkg);
+                        spkg->FLAG = ACK;
+                        spkg->seq = (seq++)%(BUFSIZE-1)+1;
+                        spkg->ack = ack;//还是上一个ack
+                        spkg->Checksum = checksumFunc();
+                        sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
+                        printf("[log] client to server ACK, seq=%d,ack=%d\n", spkg->seq, spkg->ack);
+                    }
                 }
                 break;
             case 2: //挥手，回复ACK
@@ -114,7 +136,7 @@ int main(){
                     state = 0;
                 }
                 else{
-                    printf("[log] server to client ACK, seq=%d\n, ack=%d", rpkg->seq, rpkg->ack);
+                    printf("[log] server to client ACK, seq=%d, ack=%d\n", rpkg->seq, rpkg->ack);
                     CONNECT = false;
                     state = 0;
                 }
