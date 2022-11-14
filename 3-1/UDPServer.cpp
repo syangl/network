@@ -16,19 +16,19 @@ int main(){
     wVersionRequested = MAKEWORD(2, 2);
     int err = WSAStartup(wVersionRequested, &wsaData);
     if (err != 0) {
-        wprintf(L"{---WSAStartup failed with error: %d\n}", err);
+        wprintf(L"[log] WSAStartup failed with error: %d\n", err);
         return 1;
     }else{
-        wprintf(L"{---WSAStartup Success}\n");
+        wprintf(L"[log] WSAStartup Success\n");
     }
     //socket
     SOCKET sockSrv = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockSrv == INVALID_SOCKET) {
-        wprintf(L"{---socket function failed with error: %u}\n", WSAGetLastError());
+        wprintf(L"[log] socket function failed with error: %u\n", WSAGetLastError());
         WSACleanup();
         return 1;
     }else{
-        wprintf(L"{---socket function Success}\n");
+        wprintf(L"[log] socket function Success\n");
     }
 
     int addrlen = sizeof(SOCKADDR_IN);
@@ -40,29 +40,32 @@ int main(){
     //bind
     int iResult = bind(sockSrv, (SOCKADDR*)&addrSrv, sizeof(SOCKADDR));
     if (iResult == SOCKET_ERROR) {
-        wprintf(L"{---bind failed with error %u}\n", WSAGetLastError());
+        wprintf(L"[log] bind failed with error %u\n", WSAGetLastError());
         closesocket(sockSrv);
         WSACleanup();
         return 1;
     }
     else {
-        wprintf(L"{---bind returned success}\n");
+        wprintf(L"[log] bind returned success\n");
     }
-
+    wprintf(L"==============================================================\n");
     sockaddr_in addrClient;
 	// char recvBuf[BUFSIZE];
 	// char sendBuf[BUFSIZE];
-    UDPPackage *rpkg; initUDPPackage(rpkg);//收
-    UDPPackage *spkg; initUDPPackage(spkg);//发
+    UDPPackage *rpkg = new UDPPackage(); initUDPPackage(rpkg);//收
+    UDPPackage *spkg = new UDPPackage(); initUDPPackage(spkg);//发
     int len = sizeof(SOCKADDR);
     int SENDLEN = sizeof(BUFSIZE);
 
     int state = 0;
     bool CONNECT = true;
+    int recvret = -1;
     // memset(recvBuf, 0, BUFSIZE);
     // memset(sendBuf, 0, BUFSIZE);
+    printf("[log] waiting for client connect\n");
     int retlen = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len); //收到客户端请求建连
     if (retlen && rpkg->FLAG == SYN){
+        printf("[log] client to server SYN\n");
         while (CONNECT){
             switch (state){
                 case 0: //回复确认
@@ -71,23 +74,28 @@ int main(){
                     spkg->Length = sendLen;
                     sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, len);
                     state = 1;
+                    printf("[log] server to client SYN,ACK\n");
                     break;
                 case 1: //等待连接
-                    int retsize = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
-                    if (retsize < 0){
+                    recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
+                    if (recvret < 0){
                         //TODO：
+                        printf("[log] server recvfrom fail\n");
                     }
                     else{ //传输文件
                         if (rpkg->FLAG == ACK){
+                            printf("[log] client to server ACK\n");
+                            printf("[log] server to client file transmit start\n");
                             initUDPPackage(rpkg);
                             initUDPPackage(spkg);
                             // TODO：读文件到spkg
-                            char tmptest[10] = {1,2,3,4,5,6,7,8,9,10};//临时测试
+                            char tmptest[10] = "123456789";//临时测试
                             memcpy(spkg->data, tmptest, sizeof(tmptest));
                             spkg->Length = 10;
                             spkg->seq = (SEQ++)%(BUFSIZE-1)+1;
                             sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, len);
                             state = 2;
+                            printf("[log] server to client file transmit done\n");
                         }
                     }
                     break;
@@ -97,10 +105,11 @@ int main(){
                     sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, len);
                     CONNECT = false;
                     state = 0;
+                    printf("[log] server to client FIN\n");
                     break;
                 // case 2: //两次挥手，等待客户端FIN，收到断开
-                //     int retsize = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
-                //     if (retsize < 0){
+                //     int recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
+                //     if (recvret < 0){
                 //         //TODO：
                 //     }
                 //     else{
@@ -120,11 +129,11 @@ int main(){
             }//switch
         }//while
     }//if
-
+    system("pause");
     closesocket(sockSrv);
-    wprintf(L"{---Server socket closed!}\n");
+    wprintf(L"[log] server socket closed\n");
     WSACleanup();
-    wprintf(L"{---WSA cleaned!----------}\n");
+    wprintf(L"[log] WSA cleaned\n");
     wprintf(L"==============================================================\n");
 
     return 0;

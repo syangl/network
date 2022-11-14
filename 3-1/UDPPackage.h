@@ -25,14 +25,14 @@ struct UDPPackage
 };
 
 void initUDPPackage(UDPPackage *u){
-        u->seq = 0;
-        u->ack = 0;
-        u->FLAG = 0;
-        u->NOTUSED = 0;
-        u->WINDOWSIZE = 0;
-        u->Length = 0;
-        u->Checksum = 0;
-        memset(u->data, 0, BUFSIZE);
+    u->seq = 0;
+    u->ack = 0;
+    u->FLAG = 0;
+    u->NOTUSED = 0;
+    u->WINDOWSIZE = 0;
+    u->Length = 0;
+    u->Checksum = 0;
+    memset(u->data, 0, BUFSIZE);
 }
 
 // string pack(UDPPackage u) {
