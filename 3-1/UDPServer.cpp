@@ -9,6 +9,8 @@ using namespace std;
 
 int sendLen = BUFSIZE;
 
+int state = 0;
+
 int main(){
     //start
     WSADATA wsaData;
@@ -54,47 +56,59 @@ int main(){
 	// char sendBuf[BUFSIZE];
     UDPPackage *rpkg = new UDPPackage(); initUDPPackage(rpkg);//收
     UDPPackage *spkg = new UDPPackage(); initUDPPackage(spkg);//发
+    int seq = 10, ack = 0; //server seq, ack, can be random only at init
     int len = sizeof(SOCKADDR);
     int SENDLEN = sizeof(BUFSIZE);
 
-    int state = 0;
     bool CONNECT = true;
     int recvret = -1;
     // memset(recvBuf, 0, BUFSIZE);
     // memset(sendBuf, 0, BUFSIZE);
-    printf("[log] waiting for client connect\n");
+    printf("[log] listening for client connect\n");
     int retlen = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len); //收到客户端请求建连
     if (retlen && rpkg->FLAG == SYN){
-        printf("[log] client to server SYN\n");
+        ack = rpkg->seq + 1;
+        printf("[log] client to server SYN, seq=%d\n",rpkg->seq);
         while (CONNECT){
             switch (state){
                 case 0: //回复确认
                     initUDPPackage(spkg);
                     spkg->FLAG = SYNACK;
                     spkg->Length = sendLen;
+                    spkg->seq = (seq++)%(BUFSIZE-1)+1;
+                    spkg->ack = ack;
                     sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, len);
                     state = 1;
-                    printf("[log] server to client SYN,ACK\n");
+                    printf("[log] server to client SYN,ACK, seq=%d,ack=%d\n", spkg->seq, spkg->ack);
                     break;
                 case 1: //等待连接
                     recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
                     if (recvret < 0){
-                        //TODO：
                         printf("[log] server recvfrom fail\n");
+                        CONNECT = false;
+                        state = 0;
                     }
-                    else{ //传输文件
+                    else{ //传输文件，在此状态下不停发送，完毕后状态跳转
                         if (rpkg->FLAG == ACK){
-                            printf("[log] client to server ACK\n");
+                            ack = rpkg->seq + 1;
+                            printf("[log] client to server ACK, seq=%d, ack=%d\n", rpkg->seq, rpkg->ack);
                             printf("[log] server to client file transmit start\n");
                             initUDPPackage(rpkg);
                             initUDPPackage(spkg);
+
                             // TODO：读文件到spkg
-                            char tmptest[10] = "123456789";//临时测试
+                            { //临时测试
+                            char tmptest[10] = "123456789";
                             memcpy(spkg->data, tmptest, sizeof(tmptest));
                             spkg->Length = 10;
-                            spkg->seq = (SEQ++)%(BUFSIZE-1)+1;
+                            spkg->seq = (seq++)%(BUFSIZE-1)+1;
                             sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, len);
                             state = 2;
+                            }
+                            /*函数内实现*/
+                            //TODO
+                            /*函数内实现*/
+
                             printf("[log] server to client file transmit done\n");
                         }
                     }
@@ -102,28 +116,35 @@ int main(){
                 case 2: //传输完毕，单向传输，挥手
                     initUDPPackage(spkg);
                     spkg->FLAG = FIN;
+                    spkg->seq = (seq++)%(BUFSIZE-1)+1;
                     sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, len);
+                    printf("[log] server to client FIN, seq=%d\n", spkg->seq);
                     CONNECT = false;
-                    state = 0;
-                    printf("[log] server to client FIN\n");
+                    state = 3;
                     break;
-                // case 2: //两次挥手，等待客户端FIN，收到断开
-                //     int recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
-                //     if (recvret < 0){
-                //         //TODO：
-                //     }
-                //     else{
-                //         if (rpkg->FLAG == FIN){
-                //             initUDPPackage(rpkg);
-                //             initUDPPackage(spkg);
-                //             spkg->FLAG = FINACK;
-                //             sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, len);
-                //             CONNECT = false;
-                //             state = 0;
-                //             break;
-                //         }
-                //     }
-                //     break;
+                case 3: //等待客户端ACK,因为单向传输，收到客户端ACK后直接跳转到回复ACK阶段
+                    recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
+                    if (recvret < 0){
+                        printf("[log] server recvfrom fail\n");
+                        CONNECT = false;
+                        state = 0;
+                    }
+                    else{
+                        ack = rpkg->seq + 1;
+                        printf("[log] client to server ACK, seq=%d, ack=%d\n", rpkg->seq, rpkg->ack);
+                        state = 4;
+                    }
+                    break;
+                case 4: //回复ACK，等待两倍延时关闭
+                    initUDPPackage(spkg);
+                    spkg->FLAG = ACK;
+                    spkg->seq = (seq++)%(BUFSIZE-1)+1;
+                    spkg->ack = ack;
+                    sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, len);
+                    printf("[log] server to client ACK, seq=%d,ack=%d\n", spkg->seq, spkg->ack);
+                    // TODO两倍时延
+                    
+                    break;
                 default:
                     break;
             }//switch

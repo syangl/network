@@ -8,9 +8,9 @@ using namespace std;
 #define SYNACK 101
 #define ACK 1
 #define FIN 10
-#define FINACK 11
 
-int SEQ = 0;
+
+// int SEQ = 0;
 
 struct UDPPackage
 {//首部16字节
