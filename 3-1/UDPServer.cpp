@@ -14,61 +14,6 @@ int sendLen = BUFSIZE;
 int state = 0;
 DWORD RTO = 1000;
 
-// void sendFunc(UDPPackage *spkg, int &seq, int &ack, int &sent_offset, SOCKET &sockSrv, sockaddr_in &addrClient){
-//     //read file
-//     ifstream ifile;
-//     ifile.open("test/helloworld.txt", ifstream::in | ios::binary);
-//     if (!ifile) {
-// 	    printf("[log] open file error");
-// 	    return;
-//     }
-//     ifile.seekg(0, ifile.end);
-//     int file_len = ifile.tellg();
-//     ifile.seekg(0, ifile.beg);
-//     char *data = new char[file_len];
-//     memset(data, 0, sizeof(data));
-//     ifile.read(data, file_len);
-//     ifile.close();
-
-//     initUDPPackage(spkg);
-//     spkg->seq = seq; seq = (seq+1)%BUFSIZE;
-//     spkg->Length = SENTPACKSIZE;
-//     memcpy(spkg->data, data + sent_offset, spkg->Length);
-//     sent_offset += (int)spkg->Length;
-//     spkg->Checksum = checksumFunc();
-
-//     int sendret = sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, sizeof(SOCKADDR));
-//     printf("[log] server to client SYN,ACK, seq=%d\n", spkg->seq);
-//     if (sendret < 0){
-//         printf("[log] send message error");
-//         return;
-//     }
-
-//     if (sent_offset >= file_len){//发完了则FIN让客户端状态跳转
-//         initUDPPackage(spkg);
-//         spkg->seq = seq; seq = (seq+1)%BUFSIZE;
-//         spkg->FLAG = FIN;
-//         int sendret = sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, sizeof(SOCKADDR));
-//         printf("[log] server to client FIN, seq=%d\n", spkg->seq);
-//         if (sendret < 0){
-//             printf("[log] send message error");
-//             return;
-//         }
-//     }
-
-// }
-
-
-
-
-
-
-
-
-
-
-
-
 
 int main(){
     //start
@@ -95,8 +40,8 @@ int main(){
     int addrlen = sizeof(SOCKADDR_IN);
     sockaddr_in addrSrv;
     addrSrv.sin_family = AF_INET;
-    addrSrv.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
-    addrSrv.sin_port = htons(8000);
+    addrSrv.sin_addr.S_un.S_addr = inet_addr("192.168.159.1");
+    addrSrv.sin_port = htons(4000);
 
     //bind
     int iResult = bind(sockSrv, (SOCKADDR*)&addrSrv, sizeof(SOCKADDR));
@@ -161,11 +106,10 @@ int main(){
                     break;
                 case 2://正常发送
                     //读文件，TODO：改进成getline输入文件名读入文件
-                    ifile.open("test/helloworld.txt", ifstream::in | ios::binary);
+                    ifile.open(infilename, ifstream::in | ios::binary);
                     if (!ifile){
-                        printf("[log] open file error");
-                        CONNECT = false;
-                        state = 0;
+                        printf("[log] open file error\n");
+                        continue;
                     }
                     ifile.seekg(0, ifile.end);
                     file_len = ifile.tellg();
@@ -177,7 +121,7 @@ int main(){
 
                     initUDPPackage(spkg);
                     spkg->seq = seq; seq = (seq+1)%BUFSIZE;
-                    spkg->Length = SENTPACKSIZE;
+                    spkg->Length = SENTPACKSIZE < (file_len - sent_offset) ? SENTPACKSIZE : (file_len - sent_offset); //传剩于文件大小和最大报文的较小值
                     memcpy(spkg->data, file_data + sent_offset, spkg->Length);
                     sent_offset += (int)spkg->Length;
                     spkg->Checksum = checksumFunc(spkg,spkg->Length+UDPHEADLEN);
@@ -202,12 +146,12 @@ int main(){
                 case 3://正常接收和重传发送
                     //recv ACK
                     recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
-                    printf("[log] client to server ACK, seq=%d, ack=%d\n", rpkg->seq, rpkg->ack);
                     if (recvret > 0){
+                        printf("[log] client to server ACK, seq=%d, ack=%d\n", rpkg->seq, rpkg->ack);
                         if (rpkg->ack != seq){//验证ack
                             // 差错重传
                             //读文件，TODO：改进成getline输入文件名读入文件
-                            ifile.open("test/1.jpg", ifstream::in | ios::binary);
+                            ifile.open(infilename, ifstream::in | ios::binary);
                             if (!ifile){
                                 printf("[log] open file error");
                                 CONNECT = false;
@@ -222,7 +166,7 @@ int main(){
                             ifile.close();
 
                             initUDPPackage(spkg);
-                            spkg->seq = rpkg->ack; //重传
+                            spkg->seq = rpkg->ack; //seq = (seq+1)%BUFSIZE;//重传
                             spkg->Length = SENTPACKSIZE;
                             sent_offset -= (int)spkg->Length; //回退file offset到上一次位置
                             memcpy(spkg->data, file_data + sent_offset, spkg->Length);
@@ -242,7 +186,7 @@ int main(){
                     }
                     else{
                         //超时重传
-                        ifile.open("test/1.jpg", ifstream::in | ios::binary);
+                        ifile.open(infilename, ifstream::in | ios::binary);
                         if (!ifile){
                             printf("[log] open file error");
                             CONNECT = false;
@@ -257,7 +201,7 @@ int main(){
                         ifile.close();
 
                         initUDPPackage(spkg);
-                        spkg->seq = rpkg->ack; //重传
+                        spkg->seq = --seq; seq = (seq+1)%BUFSIZE;//重传
                         spkg->Length = SENTPACKSIZE;
                         sent_offset -= (int)spkg->Length; //回退file offset到上一次位置
                         memcpy(spkg->data, file_data + sent_offset, spkg->Length);
@@ -295,7 +239,7 @@ int main(){
                 case 5: //等待客户端ACK,因为单向传输，收到客户端ACK后直接跳转到回复ACK阶段
                     recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
                     if (recvret < 0){
-                        printf("[log] server recvfrom fail\n");
+                        printf("[log] server recvfrom fail and exit\n");
                         CONNECT = false;
                         state = 0;
                     }

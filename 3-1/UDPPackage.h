@@ -3,15 +3,18 @@
 #include<WinSock2.h>
 using namespace std;
 
-#define BUFSIZE 1024
+#define BUFSIZE 8192 //缓冲区大小
 #define SYN 100
 #define SYNACK 101
 #define ACK 1
 #define FIN 10
 
-#define SENTPACKSIZE 1024
+#define SENTPACKSIZE 4096 //报文最大大小
 
 #define UDPHEADLEN 16 //bytes
+
+#define infilename  "test/1.jpg" //"test/2.jpg" "test/3.jpg" "test/helloworld.txt"
+#define outfilename "output/1.jpg" //"output/1.jpg" "output/2.jpg" "output/3.jpg" "output/helloworld.txt"
 
 struct UDPPackage
 {//首部16字节
@@ -49,7 +52,6 @@ uint16_t checksumFunc(UDPPackage *pkg, int pkg_size){
 			checksum++;
 		}
 	}
-    // printf("checksum=%u\n",(uint16_t)(~(checksum & 0xffff)));
 	return ~(checksum & 0xffff);
     // return (uint16_t)0;
 }

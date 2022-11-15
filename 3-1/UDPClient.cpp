@@ -6,6 +6,7 @@
 #include<WinSock2.h>
 #include "UDPPackage.h"
 #include<fstream>
+#include<windows.h>
 using namespace std;
 
 int state = 0;
@@ -35,7 +36,7 @@ int main(){
     sockaddr_in addrSrv;
     addrSrv.sin_family = AF_INET;
     addrSrv.sin_addr.s_addr = inet_addr("127.0.0.1");
-    addrSrv.sin_port = htons(8000);
+    addrSrv.sin_port = htons(4001);
 
     UDPPackage *rpkg = new UDPPackage(); initUDPPackage(rpkg);//收
     UDPPackage *spkg = new UDPPackage(); initUDPPackage(spkg);//发
@@ -90,11 +91,10 @@ int main(){
                         ack = (rpkg->seq + 1)%BUFSIZE;
                         printf("[log] server to client file data, seq=%d, checksum=%d\n",rpkg->seq, rpkg->Checksum);
                         //文件写入
-                        outfile.open("output/helloworld.txt", ofstream::out | ios::binary | ios::app);
+                        outfile.open(outfilename, ofstream::out | ios::binary | ios::app);
                         if (!outfile){
-	                        printf("[log] open file error");
-                            CONNECT = false;
-                            state = 0;
+	                        printf("[log] open file error\n");
+                            continue;
                         }
                         outfile.write(rpkg->data, rpkg->Length);
                         outfile.close();
@@ -105,6 +105,7 @@ int main(){
                         spkg->ack = ack;
                         // spkg->Checksum = checksumFunc(spkg, spkg->Length+UDPHEADLEN);
                         sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
+                        // Sleep(1000);
                         printf("[log] client to server ACK, seq=%d,ack=%d\n", spkg->seq, spkg->ack);
                     }
                     else{//有错重传
