@@ -11,6 +11,8 @@ using namespace std;
 
 #define SENTPACKSIZE 1024
 
+#define UDPHEADLEN 16 //bytes
+
 struct UDPPackage
 {//首部16字节
     uint32_t seq;
@@ -18,9 +20,9 @@ struct UDPPackage
     uint8_t FLAG;
     uint8_t NOTUSED;
     uint16_t WINDOWSIZE;
-    uint16_t Length; //不包含首部，data字节数
+    uint16_t Length; //bytes,不包含首部，data字节数
     uint16_t Checksum;
-    char data[BUFSIZE];//3-1还没有实现缓冲区，发一次就写一次文件
+    char data[BUFSIZE];//3-1还没有实现缓冲区滑动窗口，目前一次发送整个SENTPACKSIZE并立即写一次文件
 };
 
 void initUDPPackage(UDPPackage *u){
@@ -34,7 +36,20 @@ void initUDPPackage(UDPPackage *u){
     memset(u->data, 0, BUFSIZE);
 }
 
-uint16_t checksumFunc(){
-    //TODO
-    return (uint16_t)0;
+uint16_t checksumFunc(UDPPackage *pkg, int pkg_size){
+    int count = (pkg_size + 1) / 2;
+    uint16_t *buf = new uint16_t[pkg_size+1];
+    memset(buf, 0, pkg_size+1);
+    memcpy(buf, (uint16_t*)pkg, pkg_size);
+	ULONG checksum = 0;
+	while (count--) {
+		checksum += *buf++;
+		if (checksum & 0xffff0000) {
+			checksum &= 0xffff;
+			checksum++;
+		}
+	}
+    // printf("checksum=%u\n",(uint16_t)(~(checksum & 0xffff)));
+	return ~(checksum & 0xffff);
+    // return (uint16_t)0;
 }

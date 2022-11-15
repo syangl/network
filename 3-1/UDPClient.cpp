@@ -41,13 +41,13 @@ int main(){
     UDPPackage *spkg = new UDPPackage(); initUDPPackage(spkg);//发
     int seq = 0, ack = 0; //client seq, ack, can be random only at init
     int len = sizeof(SOCKADDR);
-    int SENDLEN = sizeof(BUFSIZE);
+    // int SENDLEN = sizeof(BUFSIZE);
     int recvret = -1;
 
     bool CONNECT = true;
 
     spkg->FLAG = SYN;
-    spkg->seq = (seq++)%(BUFSIZE-1)+1;
+    spkg->seq = seq; seq = (seq+1)%BUFSIZE;
     sendto(sockClient, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrSrv, len);
     printf("[log] client to server SYN, seq=%d\n", spkg->seq);
     while(CONNECT){
@@ -61,7 +61,7 @@ int main(){
                     state = 0;
                 }
                 else{
-                    ack = (rpkg->seq%(BUFSIZE-1)+1);
+                    ack = (rpkg->seq + 1)%BUFSIZE;
                     printf("[log] server to client SYN,ACK, seq=%d,ack=%d\n",rpkg->seq,rpkg->ack);
                     initUDPPackage(rpkg);
                     initUDPPackage(spkg);
@@ -82,15 +82,15 @@ int main(){
                     //do nothing
                 }
                 else if (rpkg->FLAG == FIN){
-                    ack = (rpkg->seq%(BUFSIZE-1)+1);
+                    ack = (rpkg->seq + 1)%BUFSIZE;
                     state = 2;
                 }
                 else{
-                    if (ack == rpkg->seq && !checksumFunc()){//没错
-                        ack = (rpkg->seq%(BUFSIZE-1)+1);
-                        printf("[log] server to client file data, seq=%d\n",rpkg->seq);
+                    if (ack == rpkg->seq && !checksumFunc(rpkg, rpkg->Length+UDPHEADLEN)){//没错
+                        ack = (rpkg->seq + 1)%BUFSIZE;
+                        printf("[log] server to client file data, seq=%d, checksum=%d\n",rpkg->seq, rpkg->Checksum);
                         //文件写入
-                        outfile.open("output/1.jpg", ofstream::out | ios::binary | ios::app);
+                        outfile.open("output/helloworld.txt", ofstream::out | ios::binary | ios::app);
                         if (!outfile){
 	                        printf("[log] open file error");
                             CONNECT = false;
@@ -101,20 +101,20 @@ int main(){
 
                         initUDPPackage(spkg);
                         spkg->FLAG = ACK;
-                        spkg->seq = (seq++)%(BUFSIZE-1)+1;
+                        spkg->seq = seq; seq = (seq+1)%BUFSIZE;
                         spkg->ack = ack;
-                        spkg->Checksum = checksumFunc();
+                        // spkg->Checksum = checksumFunc(spkg, spkg->Length+UDPHEADLEN);
                         sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
                         printf("[log] client to server ACK, seq=%d,ack=%d\n", spkg->seq, spkg->ack);
                     }
                     else{//有错重传
                         initUDPPackage(spkg);
                         spkg->FLAG = ACK;
-                        spkg->seq = (seq++)%(BUFSIZE-1)+1;
+                        spkg->seq = seq; seq = (seq+1)%BUFSIZE;
                         spkg->ack = ack;//还是上一个ack
-                        spkg->Checksum = checksumFunc();
+                        // spkg->Checksum = checksumFunc(spkg, spkg->Length+UDPHEADLEN);
                         sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
-                        printf("[log] client to server ACK, seq=%d,ack=%d\n", spkg->seq, spkg->ack);
+                        printf("[log] check wrong: client to server ACK, seq=%d,ack=%d\n", spkg->seq, spkg->ack);
                     }
                 }
                 break;
@@ -122,7 +122,7 @@ int main(){
                 printf("[log] server to client FIN, seq=%d\n", rpkg->seq);
                 initUDPPackage(spkg);
                 spkg->FLAG = ACK;
-                spkg->seq = (seq++)%(BUFSIZE-1)+1;
+                spkg->seq = seq; seq = (seq+1)%BUFSIZE;
                 spkg->ack = ack;
                 sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
                 printf("[log] client to server ACK, seq=%d,ack=%d\n", spkg->seq, spkg->ack);
