@@ -1,4 +1,6 @@
-#include<string>
+// #include<string>
+#include<string.h>
+// #include<cstring>
 #include<stdint.h>
 #include<WinSock2.h>
 using namespace std;
@@ -9,12 +11,12 @@ using namespace std;
 #define ACK 1
 #define FIN 10
 
-#define SENTPACKSIZE 4096 //报文最大大小
+#define SENTPACKSIZE 8192 //报文最大大小
 
 #define UDPHEADLEN 16 //bytes
 
-#define infilename  "test/1.jpg" //"test/2.jpg" "test/3.jpg" "test/helloworld.txt"
-#define outfilename "output/1.jpg" //"output/1.jpg" "output/2.jpg" "output/3.jpg" "output/helloworld.txt"
+char infilename[100]; //(server use) "test/1.jpg" "test/2.jpg" "test/3.jpg" "test/helloworld.txt"
+char outfilename[100]; //(client use) "output/1.jpg" "output/2.jpg" "output/3.jpg" "output/helloworld.txt"
 
 struct UDPPackage
 {//首部16字节

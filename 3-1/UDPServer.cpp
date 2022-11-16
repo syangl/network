@@ -2,7 +2,7 @@
 #include<fstream>
 #include<stdio.h>
 #include<time.h>
-#include<string>
+// #include<string>
 #include<stdint.h>
 #include<WinSock2.h>
 #include "UDPPackage.h"
@@ -73,6 +73,9 @@ int main(){
 
     printf("[log] listening for client connect\n");
     int retlen = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len); //收到客户端请求建连
+    printf("[input] please input a infilename under dir test/* (such as: test/1.jpg): \n");
+    scanf("%s", infilename);
+
     if (retlen && rpkg->FLAG == SYN){
         ack = (rpkg->seq + 1)%BUFSIZE;
         printf("[log] client to server SYN, seq=%d\n",rpkg->seq);

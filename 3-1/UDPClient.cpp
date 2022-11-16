@@ -33,6 +33,9 @@ int main(){
         wprintf(L"[log] socket function Success\n");
     }
     wprintf(L"==============================================================\n");
+    printf("[input] input your output file path(output/*): \n");
+    scanf("%s", outfilename);
+    wprintf(L"==============================================================\n");
     sockaddr_in addrSrv;
     addrSrv.sin_family = AF_INET;
     addrSrv.sin_addr.s_addr = inet_addr("127.0.0.1");
@@ -93,7 +96,7 @@ int main(){
                         //文件写入
                         outfile.open(outfilename, ofstream::out | ios::binary | ios::app);
                         if (!outfile){
-	                        printf("[log] open file error\n");
+	                        printf("[log] open file error, file name:%s\n", outfilename);
                             continue;
                         }
                         outfile.write(rpkg->data, rpkg->Length);
