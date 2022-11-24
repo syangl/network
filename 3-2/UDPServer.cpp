@@ -10,7 +10,7 @@
 using namespace std;
 
 int state = 0;
-DWORD RTO = 2000;//ms
+DWORD RTO = 2000+N*5;//ms
 
 //滑动窗口
 int slide_left = 0;
@@ -19,6 +19,8 @@ int slide_right = slide_left + N;//right是滑动窗口右边界+1
 char sendbuf[BUFSIZE];
 int bufpos = 0;//值等于BUFSIZE则重新置0
 int buf_endpos = 511;
+//重传标志
+bool resent = false;
 
 int main(){
     //start
@@ -85,7 +87,7 @@ int main(){
     //读文件，file_data读到整个文件
     printf("[input] please input a infilename under dir test/* (such as: test/1.jpg): \n");
     #if debug
-        strcpy(infilename,"test/2.jpg");
+        strcpy(infilename,"test/3.jpg");
     #else
         scanf("%s", infilename);
     #endif
@@ -144,7 +146,7 @@ int main(){
                         printf("state 2 send:\n");
                     #endif
                     //如果bufpos回到开头则重新用spkg填满sendbuf
-                    if (bufpos == 0){
+                    if ((bufpos == 0) && (resent == false)){
                         for (int i = 0; i < (BUFSIZE/PACKSIZE); ++i){
                             initUDPPackage(spkg);
                             spkg->seq = buf_seq;
@@ -155,7 +157,7 @@ int main(){
                             spkg->WINDOWSIZE = N;//设置发送窗口当前大小
                             spkg->Checksum = checksumFunc(spkg, spkg->Length + UDPHEADLEN);//校验和最后算
                             memcpy(sendbuf + i*PACKSIZE, (char*)spkg, sizeof(*spkg));
-                            //若发完了则终止
+                            //若文件读完了则终止
                             if (sent_offset >= file_len){
                                 buf_endpos = i;
                                 break;
@@ -189,7 +191,7 @@ int main(){
                         Sleep(10);
                     }
                     bufpos %= SEQMAX;
-                    printf("[log] Send Slide Window Current Position=%d\n      Send Slide Window Current Size=%d\n", bufpos*PACKSIZE, N);
+                    printf("[log] Send Slide Window Current Position=%d Send Slide Window Current Size=%d\n", bufpos*PACKSIZE, N);
 
                     if (bufpos <= buf_endpos){
                         state = 3;
@@ -203,27 +205,30 @@ int main(){
                     //recv ACK
                     recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
                     if (recvret > 0){
-                        printf("[log] client to server ACK, seq=%d, ack=%d\n      Recv Slide Window Current Size=%d\n",
+                        printf("[log] client to server ACK, seq=%d, ack=%d Recv Slide Window Current Size=%d\n",
                                     rpkg->seq, rpkg->ack,rpkg->WINDOWSIZE);
                         if (rpkg->ack != seq) { //重传
-                            printf("%d",seq);
                             seq = rpkg->ack;
-                            bufpos = seq; //窗口位置，下一次要发送的起始位置
+                            bufpos = (seq + SEQMAX - 1)%SEQMAX; //窗口位置，下一次要发送的起始位置
+                            resent = true;
                             printf("[log] resent message\n");
                             state = 2;//回到发送
                         }else if ((sent_offset >= file_len) && (bufpos > buf_endpos)){//发完了到达状态4 FIN
+                            resent = false;
                             state = 4;
                         }else{
                             /***
                              * TODO:3-3将根据rpkg->WINDOWSIZE设置当前N的值
                             ***/
+                            resent = false;
                             state = 2;//回到发送
                         }
                     }
                     else{
                         //超时重传
-                        seq -= N;//(FIN_backnum < N ? FIN_backnum : N);
-                        bufpos = seq;//窗口位置，下一次要发送的起始位置
+                        seq = (seq + SEQMAX - N)%SEQMAX;//(FIN_backnum < N ? FIN_backnum : N);
+                        bufpos = (seq + SEQMAX - 1)%SEQMAX;//窗口位置，下一次要发送的起始位置
+                        resent = true;
                         printf("[log] timeout resent\n");
                         state = 2;
                     }

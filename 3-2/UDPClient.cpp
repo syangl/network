@@ -16,6 +16,8 @@ int slide_right = slide_left + N;//right是滑动窗口右边界+1
 //缓冲区
 char recvbuf[BUFSIZE];
 int bufpos = 0;//值等于BUFSIZE则重新置0
+//统计写入量
+float outputLen = 0.0;
 
 int main(){
     //start
@@ -38,7 +40,7 @@ int main(){
     }else{
         wprintf(L"[log] socket function Success\n");
     }
-    int time = 1000;
+    int time = 2000;
     int setoptres;
 
 
@@ -59,7 +61,7 @@ int main(){
     wprintf(L"==============================================================\n");
     printf("[input] input your output file path(output/*): \n");
     #if debug
-        strcpy(outfilename,"output/2.jpg");
+        strcpy(outfilename,"output/3.jpg");
     #else
         scanf("%s", outfilename);
     #endif
@@ -102,10 +104,10 @@ int main(){
                 }
                 break;
             case 1: //接收文件，在此状态下不停接收，完毕后状态跳转
-                setoptres = setsockopt(sockClient, SOL_SOCKET, SO_RCVTIMEO, (char*)&time, sizeof(time));
-                if (setoptres == SOCKET_ERROR){
-                    wprintf(L"setsockopt for SO_RCVTIMEO failed with error: %u\n", WSAGetLastError());
-                }
+                // setoptres = setsockopt(sockClient, SOL_SOCKET, SO_RCVTIMEO, (char*)&time, sizeof(time));
+                // if (setoptres == SOCKET_ERROR){
+                //     wprintf(L"setsockopt for SO_RCVTIMEO failed with error: %u\n", WSAGetLastError());
+                // }
                 #if debug
                     printf("state 1 recv:\n");
                 #endif
@@ -136,6 +138,7 @@ int main(){
                                 for (int j = 0; j < (BUFSIZE/PACKSIZE); ++j){
                                     UDPPackage* tmp = (UDPPackage*)(recvbuf + j*PACKSIZE);
                                     outfile.write(tmp->data, tmp->Length);
+                                    outputLen += (float)tmp->Length;
                                 }
                                 //本次收到的重新存入buf
                                 memcpy(recvbuf + bufpos*PACKSIZE, (char*)rpkg, sizeof(*rpkg));
@@ -143,6 +146,7 @@ int main(){
                         }
                         else{
                             //失序 do nothing
+                            --bufpos;
                         }
                     }//if-elif-else
                 }//for
@@ -155,7 +159,7 @@ int main(){
                     spkg->ack = ack; //连续收到最高的ack
                     spkg->WINDOWSIZE = N;
                     sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
-                    printf("[log] client to server Cumulative ACK, seq=%d,ack=%d\n      Recv Slide Window Current Size=%d\n", spkg->seq, spkg->ack, spkg->WINDOWSIZE);
+                    printf("[log] client to server Cumulative ACK, seq=%d,ack=%d Recv Slide Window Current Size=%d\n", spkg->seq, spkg->ack, spkg->WINDOWSIZE);
                 }
 
                 printf("[log] Recv Slide Window Current Position=%d\n", bufpos*PACKSIZE);
@@ -178,6 +182,7 @@ int main(){
                     for (int j = 0; j < bufpos; ++j){
                         UDPPackage *tmp = (UDPPackage *)(recvbuf + j * PACKSIZE);
                         outfile.write(tmp->data, tmp->Length);
+                        outputLen += (float)tmp->Length;
                     }
                 }
 
@@ -204,6 +209,7 @@ int main(){
         }//switch
     }//while
 
+    printf("[log] outputLen=%fMB\n", outputLen/1048576.0);
     outfile.close();
     system("pause");
     closesocket(sockClient);
