@@ -74,27 +74,45 @@ int main(){
     int recvret = -1;
     int sendret = -1;
     int file_len = 0;
-    char *file_data;
     int setoptres = -1;
     memset(sendbuf, 0, sizeof(sendbuf));
 
+
+    //listening
     printf("[log] listening for client connect\n");
     int retlen = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len); //收到客户端请求建连
+
+    //读文件，file_data读到整个文件
     printf("[input] please input a infilename under dir test/* (such as: test/1.jpg): \n");
     #if debug
         strcpy(infilename,"test/2.jpg");
     #else
         scanf("%s", infilename);
     #endif
+    ifstream ifile;
+    ifile.open(infilename, ifstream::in | ios::binary);
+    if (!ifile)
+    {
+        printf("[log] open file error\n");
+        return 1;
+    }
+    ifile.seekg(0, ifile.end);
+    file_len = ifile.tellg();
+    ifile.seekg(0, ifile.beg);
+    char *file_data = new char[file_len];
+    memset(file_data, 0, sizeof(file_data));
+    ifile.read(file_data, file_len);
+    ifile.close();
 
     if (retlen && rpkg->FLAG == SYN){
         ack = (rpkg->seq + 1)%SEQMAX;
-        printf("[log] client to server SYN, seq=%d\n",rpkg->seq);
+        printf("[log] client to server SYN, seq=%d, Recv Slide Window Size=%d\n",rpkg->seq, rpkg->WINDOWSIZE);
         while (CONNECT){
-            ifstream ifile;
             switch (state){
                 case 0: //回复确认
-                    printf("state 0:\n");
+                    #if debug
+                        printf("state 0:\n");
+                    #endif
                     initUDPPackage(spkg);
                     spkg->FLAG = SYNACK;
                     spkg->seq = seq; seq = (seq+1)%SEQMAX; buf_seq = seq;
@@ -104,7 +122,9 @@ int main(){
                     printf("[log] server to client SYN,ACK seq=%d,ack=%d\n", spkg->seq, spkg->ack);
                     break;
                 case 1: //等待连接
-                    printf("state 1:\n");
+                    #if debug
+                        printf("state 1:\n");
+                    #endif
                     recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
                     if (recvret < 0){
                         printf("[log] server recvfrom fail\n");
@@ -120,20 +140,9 @@ int main(){
                     }
                     break;
                 case 2://正常发送
-                    printf("state 2 send:\n");
-                    //读文件，file_data读到整个文件
-                    ifile.open(infilename, ifstream::in | ios::binary);
-                    if (!ifile){
-                        printf("[log] open file error\n");
-                        continue;
-                    }
-                    ifile.seekg(0, ifile.end);
-                    file_len = ifile.tellg();
-                    ifile.seekg(0, ifile.beg);
-                    file_data = new char[file_len];
-                    memset(file_data, 0, sizeof(file_data));
-                    ifile.read(file_data, file_len);
-                    ifile.close();
+                    #if debug
+                        printf("state 2 send:\n");
+                    #endif
                     //如果bufpos回到开头则重新用spkg填满sendbuf
                     if (bufpos == 0){
                         for (int i = 0; i < (BUFSIZE/PACKSIZE); ++i){
@@ -143,7 +152,8 @@ int main(){
                             spkg->Length = PACKDATASIZE < (file_len - sent_offset) ? PACKDATASIZE : (file_len - sent_offset); //传剩于文件大小和最大报文的较小值
                             memcpy(spkg->data, file_data + sent_offset, spkg->Length);
                             sent_offset += (int)spkg->Length;//sent_offset仅在这里改变
-                            spkg->Checksum = checksumFunc(spkg, spkg->Length + UDPHEADLEN);
+                            spkg->WINDOWSIZE = N;//设置发送窗口当前大小
+                            spkg->Checksum = checksumFunc(spkg, spkg->Length + UDPHEADLEN);//校验和最后算
                             memcpy(sendbuf + i*PACKSIZE, (char*)spkg, sizeof(*spkg));
                             //若发完了则终止
                             if (sent_offset >= file_len){
@@ -154,7 +164,6 @@ int main(){
                     }
 
                     //set socketopt timeout
-                    RTO = 1000;
                     setoptres = setsockopt(sockSrv, SOL_SOCKET, SO_RCVTIMEO, (char*)&RTO, sizeof(RTO));
                     if (setoptres == SOCKET_ERROR){
                         wprintf(L"setsockopt for SO_RCVTIMEO failed with error: %u\n", WSAGetLastError());
@@ -170,37 +179,44 @@ int main(){
                         sendret = sendto(sockSrv, sendbuf+bufpos*PACKSIZE, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
                         UDPPackage* tmp = (UDPPackage*)(sendbuf+bufpos*PACKSIZE);//use for print
                         seq = (tmp->seq+1)%SEQMAX;//seq要和发送的seq同步
-                        printf("[log] server to client file data, seq=%d, checksum=%u\n", tmp->seq, tmp->Checksum);
+                        printf("[log] server to client file data, seq=%d, checksum=%u\n",
+                                tmp->seq, tmp->Checksum);
                         if (sendret < 0){
                             printf("[log] send message error");
                             CONNECT = false;
                             state = 0;
                         }
-                        Sleep(50);
+                        Sleep(10);
                     }
                     bufpos %= SEQMAX;
-                    delete[] file_data;
+                    printf("[log] Send Slide Window Current Position=%d\n      Send Slide Window Current Size=%d\n", bufpos*PACKSIZE, N);
+
                     if (bufpos <= buf_endpos){
                         state = 3;
-                        //recv ACK
                     }
 
                     break;
                 case 3://正常接收和重传检查
-                    printf("state 3 recv:\n");
+                    #if debug
+                        printf("state 3 recv:\n");
+                    #endif
                     //recv ACK
                     recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
                     if (recvret > 0){
-                        printf("[log] client to server ACK, seq=%d, ack=%d\n", rpkg->seq, rpkg->ack);
+                        printf("[log] client to server ACK, seq=%d, ack=%d\n      Recv Slide Window Current Size=%d\n",
+                                    rpkg->seq, rpkg->ack,rpkg->WINDOWSIZE);
                         if (rpkg->ack != seq) { //重传
                             printf("%d",seq);
                             seq = rpkg->ack;
                             bufpos = seq; //窗口位置，下一次要发送的起始位置
-                            printf("[log] resent\n");
+                            printf("[log] resent message\n");
                             state = 2;//回到发送
                         }else if ((sent_offset >= file_len) && (bufpos > buf_endpos)){//发完了到达状态4 FIN
                             state = 4;
                         }else{
+                            /***
+                             * TODO:3-3将根据rpkg->WINDOWSIZE设置当前N的值
+                            ***/
                             state = 2;//回到发送
                         }
                     }
@@ -213,17 +229,21 @@ int main(){
                     }
                     break;
                 case 4: //传输完毕，单向传输，挥手
-                    printf("state 4:\n");
+                    #if debug
+                        printf("state 4:\n");
+                    #endif
                     initUDPPackage(spkg);
                     spkg->FLAG = FIN;
                     spkg->seq = seq; seq = (seq+1)%SEQMAX;
                     sendto(sockSrv, (char*)spkg, sizeof(*spkg), 0, (SOCKADDR*)&addrClient, len);
-                    printf("[log] server to client file transmit done, FileLength=%dB, TotalTransLength=%dB\n", file_len, sent_offset);
-                    printf("[log] server to client FIN, seq=%d\n", spkg->seq);
+                    printf("[log] server to client file transmit done, FileLength=%fMB, TotalTransLength=%fMB\n[log] server to client FIN, seq=%d\n",
+                                (file_len*1.0)/1048576.0, (sent_offset*1.0)/1048576.0, spkg->seq);
                     state = 5;
                     break;
                 case 5: //等待客户端ACK,因为单向传输，收到客户端ACK后直接跳转到回复ACK阶段
-                    printf("state 5:\n");
+                    #if debug
+                        printf("state 5:\n");
+                    #endif
                     recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
                     if (recvret < 0){
                         printf("[log] server recvfrom fail and exit\n");
@@ -237,7 +257,9 @@ int main(){
                     }
                     break;
                 case 6: //回复ACK，等待两倍延时关闭
-                    printf("state 6 close:\n");
+                    #if debug
+                        printf("state 6 close:\n");
+                    #endif
                     initUDPPackage(spkg);
                     spkg->FLAG = ACK;
                     spkg->seq = seq; seq = (seq+1)%SEQMAX;
@@ -253,6 +275,8 @@ int main(){
             }//switch
         }//while
     }//if
+
+    delete[] file_data;
     system("pause");
     closesocket(sockSrv);
     wprintf(L"[log] server socket closed\n");

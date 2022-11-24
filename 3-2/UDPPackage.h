@@ -5,7 +5,7 @@
 #include<WinSock2.h>
 using namespace std;
 //debug
-#define debug true
+#define debug false
 
 //缓冲区大小4202496B（512*8208B）
 #define BUFSIZE 4202496
@@ -23,9 +23,9 @@ int SEQMAX = BUFSIZE/PACKSIZE;//512
 #define ACK 1
 #define FIN 10
 
-//滑动窗口报文数量N（报文按最大长度计算）
-#define N 16
-//滑动窗口大小（报文数量N（报文按最大长度计算））
+//滑动窗口大小N个报文，小于(BUFSIZE/PACKSIZE)/2
+#define N 128
+//滑动窗口大小B（报文数量N（报文按最大长度计算））
 int SLIDE_WINSIZE = N*PACKDATASIZE;
 
 //文件路径
