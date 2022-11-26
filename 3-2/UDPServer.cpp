@@ -8,19 +8,86 @@
 #include "UDPPackage.h"
 
 using namespace std;
-
+SOCKET sockSrv;
+sockaddr_in addrClient;
+//状态
 int state = 0;
 DWORD RTO = 2000+N*5;//ms
-
+//thread
+HANDLE hThread;
+DWORD dwThreadId;
 //滑动窗口
-int slide_left = 0;
-int slide_right = slide_left + N;//right是滑动窗口右边界+1
+int base = 0;//值等于BUFSIZE则重新置0
+// int nextseq = 0;
 //缓冲区
 char sendbuf[BUFSIZE];
-int bufpos = 0;//值等于BUFSIZE则重新置0
 int buf_endpos = 511;
-//重传标志
-bool resent = false;
+//是否传输结束
+bool isEnd = false;
+
+bool CONNECT = true;
+int recvret = -1;
+int sendret = -1;
+//读取的文件总大小
+int file_len = 0;
+//rpkg,spkg
+UDPPackage *rpkg;
+UDPPackage *spkg;
+
+int seq = 0, ack = 0; // server seq, ack, can be random only at init
+// buf读入用的seq，和发送的seq是不同步的
+int buf_seq = seq;
+
+//读入的文件
+char *file_data;
+// file data has sent
+int sent_offset = 0;
+
+
+//buffer is full
+void bufferIsEnd(int n){
+    //如果窗口滑动n个，就把前面空闲下来的填n个新的
+    // if ((base + N) > SEQMAX){
+    int idx = base;
+    for (int i = 0; i < n; ++i){
+        initUDPPackage(spkg);
+        spkg->seq = buf_seq;
+        buf_seq = (buf_seq + 1) % SEQMAX;
+        spkg->Length = PACKDATASIZE < (file_len - sent_offset) ? PACKDATASIZE : (file_len - sent_offset); //传剩于文件大小和最大报文的较小值
+        memcpy(spkg->data, file_data + sent_offset, spkg->Length);
+        sent_offset += (int)spkg->Length;                               // sent_offset仅在这里改变
+        spkg->WINDOWSIZE = N;                                           //设置发送窗口当前大小
+        spkg->Checksum = checksumFunc(spkg, spkg->Length + UDPHEADLEN); //校验和最后算
+        memcpy(sendbuf + (idx+i) * PACKSIZE, (char *)spkg, sizeof(*spkg));
+        //若文件读完了则终止
+        if (sent_offset >= file_len){
+            buf_endpos = idx+i;
+            // break;
+        }
+    } // for
+    // }//if
+}
+
+//send thread
+DWORD WINAPI sendThread(LPVOID lparam){
+    int send_idx = (int)lparam % SEQMAX;
+    if (send_idx < base + N){
+        sendret = sendto(sockSrv, sendbuf + send_idx * PACKSIZE, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
+        UDPPackage *tmp = (UDPPackage *)(sendbuf + send_idx * PACKSIZE); // use for print
+        printf("[log] server to client file data, seq=%d, checksum=%u\n",
+               tmp->seq, tmp->Checksum);
+        if (sendret < 0){
+            printf("[log] send message error");
+            CONNECT = false;
+            state = 0;
+        }
+        // Sleep(10);
+    }
+    return 0;
+}
+
+//TODO:定时器
+
 
 int main(){
     //start
@@ -35,7 +102,7 @@ int main(){
         wprintf(L"[log] WSAStartup Success\n");
     }
     //socket
-    SOCKET sockSrv = socket(AF_INET, SOCK_DGRAM, 0);
+    sockSrv = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockSrv == INVALID_SOCKET) {
         wprintf(L"[log] socket function failed with error: %u\n", WSAGetLastError());
         WSACleanup();
@@ -62,21 +129,12 @@ int main(){
         wprintf(L"[log] bind returned success\n");
     }
     wprintf(L"==============================================================\n");
-    sockaddr_in addrClient;
 
-    UDPPackage *rpkg = new UDPPackage(); initUDPPackage(rpkg);//收
-    UDPPackage *spkg = new UDPPackage(); initUDPPackage(spkg);//发
-    int seq = 0, ack = 0; //server seq, ack, can be random only at init
-    int buf_seq = seq;//buf读入用的seq，和发送的seq是不同步的
-    int sent_offset = 0; // file data has sent
     int len = sizeof(SOCKADDR);
 
-    int FIN_backnum = N;//最后一次超时要回退的数量
-    bool CONNECT = true;
-    int recvret = -1;
-    int sendret = -1;
-    int file_len = 0;
-    int setoptres = -1;
+    // int FIN_backnum = N;//最后一次超时要回退的数量
+
+    // int setoptres = -1;
     memset(sendbuf, 0, sizeof(sendbuf));
 
 
@@ -101,7 +159,7 @@ int main(){
     ifile.seekg(0, ifile.end);
     file_len = ifile.tellg();
     ifile.seekg(0, ifile.beg);
-    char *file_data = new char[file_len];
+    file_data = new char[file_len];
     memset(file_data, 0, sizeof(file_data));
     ifile.read(file_data, file_len);
     ifile.close();
@@ -127,13 +185,15 @@ int main(){
                     #if debug
                         printf("state 1:\n");
                     #endif
+                    //recv
                     recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
                     if (recvret < 0){
                         printf("[log] server recvfrom fail\n");
                         CONNECT = false;
                         state = 0;
                     }
-                    else{ //跳转至状态2传输文件，在2状态下不停发送，完毕后状态跳转
+                    else{
+                        //跳转至状态2
                         if (rpkg->FLAG == ACK){
                             ack = (rpkg->seq + 1)%SEQMAX;
                             printf("[log] client to server ACK, seq=%d, ack=%d\n", rpkg->seq, rpkg->ack);
@@ -141,97 +201,136 @@ int main(){
                         }
                     }
                     break;
-                case 2://正常发送
+                case 2://创建N个发送线程，进入state 3, seq初始为1,对应buf的下标0位置
                     #if debug
-                        printf("state 2 send:\n");
+                        printf("state 2:\n");
                     #endif
-                    //如果bufpos回到开头则重新用spkg填满sendbuf
-                    if ((bufpos == 0) && (resent == false)){
-                        for (int i = 0; i < (BUFSIZE/PACKSIZE); ++i){
-                            initUDPPackage(spkg);
-                            spkg->seq = buf_seq;
-                            buf_seq = (buf_seq + 1) % SEQMAX;
-                            spkg->Length = PACKDATASIZE < (file_len - sent_offset) ? PACKDATASIZE : (file_len - sent_offset); //传剩于文件大小和最大报文的较小值
-                            memcpy(spkg->data, file_data + sent_offset, spkg->Length);
-                            sent_offset += (int)spkg->Length;//sent_offset仅在这里改变
-                            spkg->WINDOWSIZE = N;//设置发送窗口当前大小
-                            spkg->Checksum = checksumFunc(spkg, spkg->Length + UDPHEADLEN);//校验和最后算
-                            memcpy(sendbuf + i*PACKSIZE, (char*)spkg, sizeof(*spkg));
-                            //若文件读完了则终止
-                            if (sent_offset >= file_len){
-                                buf_endpos = i;
-                                break;
-                            }
+                    for (int i = 0; i < N; ++i){
+                        //每次发送前检查缓冲区是否发完
+                        //创建sendThread
+                        hThread = CreateThread(NULL, NULL, sendThread, (LPVOID)(seq-1), 0, &dwThreadId);
+                        if (hThread == NULL){
+                            wprintf(L"{---CreateThread error: %d}\n", GetLastError());
+                            return 1;
                         }
-                    }
+                        else{/*wprintf(L"{---CreateThread For Client----------}\n");*/}
+                        CloseHandle(hThread);
+                        seq = (seq + 1) % SEQMAX;
+                    }//for
 
-                    //set socketopt timeout
-                    setoptres = setsockopt(sockSrv, SOL_SOCKET, SO_RCVTIMEO, (char*)&RTO, sizeof(RTO));
-                    if (setoptres == SOCKET_ERROR){
-                        wprintf(L"setsockopt for SO_RCVTIMEO failed with error: %u\n", WSAGetLastError());
-                    }
+                    // //如果bufpos回到开头则重新用spkg填满sendbuf
+                    // if ((base == 0) && (resent == false)){
+                    //     for (int i = 0; i < (BUFSIZE/PACKSIZE); ++i){
+                    //         initUDPPackage(spkg);
+                    //         spkg->seq = buf_seq;
+                    //         buf_seq = (buf_seq + 1) % SEQMAX;
+                    //         spkg->Length = PACKDATASIZE < (file_len - sent_offset) ? PACKDATASIZE : (file_len - sent_offset); //传剩于文件大小和最大报文的较小值
+                    //         memcpy(spkg->data, file_data + sent_offset, spkg->Length);
+                    //         sent_offset += (int)spkg->Length;//sent_offset仅在这里改变
+                    //         spkg->WINDOWSIZE = N;//设置发送窗口当前大小
+                    //         spkg->Checksum = checksumFunc(spkg, spkg->Length + UDPHEADLEN);//校验和最后算
+                    //         memcpy(sendbuf + i*PACKSIZE, (char*)spkg, sizeof(*spkg));
+                    //         //若文件读完了则终止
+                    //         if (sent_offset >= file_len){
+                    //             buf_endpos = i;
+                    //             break;
+                    //         }
+                    //     }
+                    // }
 
-                    //连续发送N个spkg
-                    for (int i = 0; i < N; ++i,++bufpos){
-                        if (bufpos > buf_endpos){//结束时小于N次的情况
-                            state = 4;
-                            // FIN_backnum = i;
-                            break;
-                        }
-                        sendret = sendto(sockSrv, sendbuf+bufpos*PACKSIZE, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
-                        UDPPackage* tmp = (UDPPackage*)(sendbuf+bufpos*PACKSIZE);//use for print
-                        seq = (tmp->seq+1)%SEQMAX;//seq要和发送的seq同步
-                        printf("[log] server to client file data, seq=%d, checksum=%u\n",
-                                tmp->seq, tmp->Checksum);
-                        if (sendret < 0){
-                            printf("[log] send message error");
-                            CONNECT = false;
-                            state = 0;
-                        }
-                        Sleep(10);
-                    }
-                    bufpos %= SEQMAX;
-                    printf("[log] Send Slide Window Current Position=%d Send Slide Window Current Size=%d\n", bufpos*PACKSIZE, N);
+                    // // //set socketopt timeout
+                    // // setoptres = setsockopt(sockSrv, SOL_SOCKET, SO_RCVTIMEO, (char*)&RTO, sizeof(RTO));
+                    // // if (setoptres == SOCKET_ERROR){
+                    // //     wprintf(L"setsockopt for SO_RCVTIMEO failed with error: %u\n", WSAGetLastError());
+                    // // }
 
-                    if (bufpos <= buf_endpos){
-                        state = 3;
-                    }
+                    // //连续发送N个spkg
+                    // for (int i = 0; i < N; ++i,++base){
+                    //     if (base > buf_endpos){//结束时小于N次的情况
+                    //         state = 4;
+                    //         // FIN_backnum = i;
+                    //         break;
+                    //     }
+                    //     sendret = sendto(sockSrv, sendbuf+base*PACKSIZE, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
+                    //     UDPPackage* tmp = (UDPPackage*)(sendbuf+base*PACKSIZE);//use for print
+                    //     seq = (tmp->seq+1)%SEQMAX;//seq要和发送的seq同步
+                    //     printf("[log] server to client file data, seq=%d, checksum=%u\n",
+                    //             tmp->seq, tmp->Checksum);
+                    //     if (sendret < 0){
+                    //         printf("[log] send message error");
+                    //         CONNECT = false;
+                    //         state = 0;
+                    //     }
+                    //     Sleep(10);
+                    // }
+                    // base %= SEQMAX;
+                    // printf("[log] Send Slide Window Current Position=%d Send Slide Window Current Size=%d\n", base*PACKSIZE, N);
 
+                    // if (base <= buf_endpos){
+                    // }
+
+                    state = 3;
                     break;
-                case 3://正常接收和重传检查
+                case 3://接收及后续发送
                     #if debug
-                        printf("state 3 recv:\n");
+                        printf("state 3:\n");
                     #endif
-                    //recv ACK
                     recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
-                    if (recvret > 0){
-                        printf("[log] client to server ACK, seq=%d, ack=%d Recv Slide Window Current Size=%d\n",
-                                    rpkg->seq, rpkg->ack,rpkg->WINDOWSIZE);
-                        if (rpkg->ack != seq) { //重传
-                            seq = rpkg->ack;
-                            bufpos = (seq + SEQMAX - 1)%SEQMAX; //窗口位置，下一次要发送的起始位置
-                            resent = true;
-                            printf("[log] resent message\n");
-                            state = 2;//回到发送
-                        }else if ((sent_offset >= file_len) && (bufpos > buf_endpos)){//发完了到达状态4 FIN
-                            resent = false;
-                            state = 4;
-                        }else{
-                            /***
-                             * TODO:3-3将根据rpkg->WINDOWSIZE设置当前N的值
-                            ***/
-                            resent = false;
-                            state = 2;//回到发送
+                    if (recvret <= 0){
+                        wprintf(L"[log] server recvfrom error!\n");
+                        return 1;
+                    }
+                    if (rpkg->ack >= base){
+                        bufferIsEnd(rpkg->ack - base + 1);
+                        base = (rpkg->ack + 1) % SEQMAX;
+                        //TODO:销毁<base的timer
+                        // destroy(timer);
+                        while(seq - 1 < base + N){
+                            //创建sendThread
+                            hThread = CreateThread(NULL, NULL, sendThread, (LPVOID)(seq-1), 0, &dwThreadId);
+                            if (hThread == NULL){
+                                wprintf(L"{---CreateThread error: %d}\n", GetLastError());
+                                return 1;
+                            }
+                            else{ /*wprintf(L"{---CreateThread For Client----------}\n");*/}
+                            CloseHandle(hThread);
+                            seq = (base == 0) ? ((seq + 1) % SEQMAX) : (seq + 1);//让seq一直加下去，直到base回到0 seq再取模，解决窗口滑到底要循环的问题
                         }
                     }
-                    else{
-                        //超时重传
-                        seq = (seq + SEQMAX - N)%SEQMAX;//(FIN_backnum < N ? FIN_backnum : N);
-                        bufpos = (seq + SEQMAX - 1)%SEQMAX;//窗口位置，下一次要发送的起始位置
-                        resent = true;
-                        printf("[log] timeout resent\n");
-                        state = 2;
-                    }
+                    else{/*do nothing*/}
+                    // //recv ACK
+                    // recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
+                    // if (recvret > 0){
+                    //     printf("[log] client to server ACK, seq=%d, ack=%d Recv Slide Window Current Size=%d\n",
+                    //                 rpkg->seq, rpkg->ack,rpkg->WINDOWSIZE);
+                    //     if (rpkg->ack > seq) { //累积确认
+                    //         seq = rpkg->ack;
+                    //         base = (seq + SEQMAX - 1)%SEQMAX; //窗口位置，下一次要发送的起始位置
+                    //         resent = true;
+                    //         printf("[log] resent message\n");
+                    //         state = 2;//回到发送
+                    //     }else if ((sent_offset >= file_len) && (base > buf_endpos)){//发完了到达状态4 FIN
+                    //         resent = false;
+                    //         state = 4;
+                    //     }else if(rpkg->ack < seq){
+                    //         //do nothing
+                    //     }
+                    //     else{
+                    //         /***
+                    //          * 3-3将根据rpkg->WINDOWSIZE设置当前N的值
+                    //         ***/
+                    //         resent = false;
+                    //         state = 2;//回到发送
+                    //     }
+                    // }
+                    // else{
+                    //     //超时重传
+                    //     seq = (seq + SEQMAX - N)%SEQMAX;//(FIN_backnum < N ? FIN_backnum : N);
+                    //     base = (seq + SEQMAX - 1)%SEQMAX;//窗口位置，下一次要发送的起始位置
+                    //     resent = true;
+                    //     printf("[log] timeout resent\n");
+                    //     state = 2;
+                    // }
                     break;
                 case 4: //传输完毕，单向传输，挥手
                     #if debug

@@ -15,7 +15,7 @@ int slide_left = 0;
 int slide_right = slide_left + N;//right是滑动窗口右边界+1
 //缓冲区
 char recvbuf[BUFSIZE];
-int bufpos = 0;//值等于BUFSIZE则重新置0
+int base = 0;//值等于BUFSIZE则重新置0
 //统计写入量
 float outputLen = 0.0;
 
@@ -111,15 +111,15 @@ int main(){
                 #if debug
                     printf("state 1 recv:\n");
                 #endif
-                for (int i = 0; i < N; ++i,++bufpos){
+                for (int i = 0; i < N; ++i,++base){
                     recvret = recvfrom(sockClient, (char *)rpkg, sizeof(*rpkg), 0, (SOCKADDR *)&addrSrv, &len);
                     if (recvret <= 0){
                         // do nothing
-                        --bufpos;
+                        --base;
                     }
                     else if (rpkg->FLAG == FIN){
                         ack = (rpkg->seq + 1) % SEQMAX;
-                        --bufpos;
+                        --base;
                         state = 2;
                         break;
                     }
@@ -130,10 +130,10 @@ int main(){
                             printf("[log] server to client file data, seq=%d, checksum=%u, Send Slide Window Size=%d\n",
                                 rpkg->seq, rpkg->Checksum, rpkg->WINDOWSIZE);
                             //写入缓冲区or写入文件
-                            if (bufpos < SEQMAX){
-                                memcpy(recvbuf + bufpos*PACKSIZE, (char*)rpkg, sizeof(*rpkg));
+                            if (base < SEQMAX){
+                                memcpy(recvbuf + base*PACKSIZE, (char*)rpkg, sizeof(*rpkg));
                             }else{
-                                bufpos %= SEQMAX;
+                                base %= SEQMAX;
                                 //buf已经有的写入文件
                                 for (int j = 0; j < (BUFSIZE/PACKSIZE); ++j){
                                     UDPPackage* tmp = (UDPPackage*)(recvbuf + j*PACKSIZE);
@@ -141,12 +141,12 @@ int main(){
                                     outputLen += (float)tmp->Length;
                                 }
                                 //本次收到的重新存入buf
-                                memcpy(recvbuf + bufpos*PACKSIZE, (char*)rpkg, sizeof(*rpkg));
+                                memcpy(recvbuf + base*PACKSIZE, (char*)rpkg, sizeof(*rpkg));
                             }
                         }
                         else{
                             //失序 do nothing
-                            --bufpos;
+                            --base;
                         }
                     }//if-elif-else
                 }//for
@@ -162,7 +162,7 @@ int main(){
                     printf("[log] client to server Cumulative ACK, seq=%d,ack=%d Recv Slide Window Current Size=%d\n", spkg->seq, spkg->ack, spkg->WINDOWSIZE);
                 }
 
-                printf("[log] Recv Slide Window Current Position=%d\n", bufpos*PACKSIZE);
+                printf("[log] Recv Slide Window Current Position=%d\n", base*PACKSIZE);
 
                 break;
             case 2: //挥手，回复ACK
@@ -178,8 +178,8 @@ int main(){
                 printf("[log] client to server ACK, seq=%d,ack=%d\n", spkg->seq, spkg->ack);
 
                 //剩余的buf写入文件
-                if (bufpos != 0){
-                    for (int j = 0; j < bufpos; ++j){
+                if (base != 0){
+                    for (int j = 0; j < base; ++j){
                         UDPPackage *tmp = (UDPPackage *)(recvbuf + j * PACKSIZE);
                         outfile.write(tmp->data, tmp->Length);
                         outputLen += (float)tmp->Length;
