@@ -11,11 +11,13 @@ using namespace std;
 SOCKET sockSrv;
 sockaddr_in addrClient;
 //状态
-atomic_int32_t state = 0;
-DWORD RTO = 2000+N*5;//ms
+atomic_int32_t state;
+DWORD RTO = 1000;//ms
 //thread
 HANDLE hThread;
 DWORD dwThreadId;
+DWORD dwState2ThreadId;
+HANDLE hState2Thread;
 //滑动窗口
 int base = 0;//值等于BUFSIZE则重新置0
 // int nextseq = 0;
@@ -48,7 +50,8 @@ HANDLE hTimerQueue;
 HANDLE hTimer[1000];//保证hTimer足够大，下标等于base，等于seq-1
 int timer_idx = 0;
 
-
+//use for bufferIsEnd
+int step_n;
 
 //buffer is full
 void bufferIsEnd(int n){
@@ -79,9 +82,10 @@ void bufferIsEnd(int n){
 }
 
 static VOID CALLBACK TimerRoutine(PVOID lpParam, BOOLEAN TimerOrWaitFired);
+
 //send thread
 DWORD WINAPI sendThread(LPVOID lparam){
-    int send_idx = (int)lparam % SEQMAX;//防止越界
+    int send_idx = ((int)lparam + SEQMAX)% SEQMAX;//防止越界
     UDPPackage *tmp = (UDPPackage *)(sendbuf + send_idx * PACKSIZE); // use for print
     //结束
     if (tmp->FLAG == FIN){
@@ -89,21 +93,18 @@ DWORD WINAPI sendThread(LPVOID lparam){
         return 0;
     }
     // create timer
-    if (hTimer[send_idx] != NULL){
-        DeleteTimerQueueTimer(hTimerQueue, hTimer[send_idx],  NULL);
-    }
-    CreateTimerQueueTimer( &hTimer[send_idx], hTimerQueue, (WAITORTIMERCALLBACK)TimerRoutine, NULL, RTO, RTO, 0);
+    // if (hTimer[send_idx] != NULL){
+    //     DeleteTimerQueueTimer(hTimerQueue, hTimer[send_idx],  NULL);
+    // }
+    // CreateTimerQueueTimer( &hTimer[send_idx], hTimerQueue, (WAITORTIMERCALLBACK)TimerRoutine, NULL, RTO, RTO, 0);
     //send
     if ((send_idx < base + N)&&(state != 4)){
         sendret = sendto(sockSrv, sendbuf + send_idx * PACKSIZE, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
         printf("[log] server to client file data, seq=%d, checksum=%u\n",
                tmp->seq, tmp->Checksum);
         if (sendret < 0){
-            printf("[log] send message error");
-            CONNECT = false;
-            state = 0;
+            printf("[log] send message error\n");
         }
-        // Sleep(10);
     }
     return 0;
 }
@@ -111,34 +112,52 @@ DWORD WINAPI sendThread(LPVOID lparam){
 //初始发送线程，只在state2用一次
 DWORD WINAPI State2SendThread(LPVOID lparam){
     for (int i = 0; i < N; ++i){
-        //每次发送前检查缓冲区是否发完
+        Sleep(50);
+        printf("state2 i=%d\n",i);
         //创建sendThread
-        hThread = CreateThread(NULL, NULL, sendThread, (LPVOID)(seq - 1), 0, &dwThreadId);
-        if (hThread == NULL){
-            wprintf(L"{---CreateThread error: %d}\n", GetLastError());
-            return 1;
+        // HANDLE hState2SendThread = CreateThread(NULL, NULL, sendThread, (LPVOID)(seq - 1), 0, &dwThreadId);
+        // if (hState2SendThread == NULL){
+        //     wprintf(L"{---CreateThread error: %d}\n", GetLastError());
+        //     return 1;
+        // }
+        // else{ /*wprintf(L"{---CreateThread For Client----------}\n");*/
+        // }
+        // CloseHandle(hState2SendThread);
+        UDPPackage *tmp = (UDPPackage *)(sendbuf + i * PACKSIZE); // use for print
+        sendret = sendto(sockSrv, sendbuf + i * PACKSIZE, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
+        printf("[log] server to client file data, seq=%d, checksum=%u\n",
+               tmp->seq, tmp->Checksum);
+        if (sendret < 0){
+            printf("[log] send message error\n");
         }
-        else{ /*wprintf(L"{---CreateThread For Client----------}\n");*/
-        }
-        CloseHandle(hThread);
         seq = (seq + 1) % SEQMAX;
     } // for
 }
 
 //定时器
-static VOID CALLBACK TimerRoutine(PVOID lpParam, BOOLEAN TimerOrWaitFired){
-    if (state == 4){
-        DeleteTimerQueueEx(hTimerQueue, NULL);
-    }
+static VOID CALLBACK TimerRoutine(PVOID lpParam, BOOLEAN TimerOrWaitFired){//TODO:不要再创建线程，还有就是或者可以定时器一次生命周期即可，回调函数发送后再创一个定时器？
+    // if (state == 4 && hTimerQueue != NULL){
+    //     DeleteTimerQueueEx(hTimerQueue, NULL);
+    // }
+    // Sleep(5000);
     for (int i = 0; i < N; ++i){
+        Sleep(50);
         //创建sendThread
-        hThread = CreateThread(NULL, NULL, sendThread, (LPVOID)(base+i), 0, &dwThreadId);
-        if (hThread == NULL){
-            wprintf(L"{---CreateThread error: %d}\n", GetLastError());
-            return;
+        // HANDLE hTimerRoutineThread = CreateThread(NULL, NULL, sendThread, (LPVOID)(base+i), 0, &dwThreadId);
+        // if (hTimerRoutineThread == NULL){
+        //     wprintf(L"{---CreateThread error: %d}\n", GetLastError());
+        //     return;
+        // }
+        // else{ /*wprintf(L"{---CreateThread For Client----------}\n");*/}
+        // CloseHandle(hTimerRoutineThread);
+        int tr_idx = (base+i) % SEQMAX;
+        UDPPackage *tmp = (UDPPackage *)(sendbuf + tr_idx * PACKSIZE); // use for print
+        sendret = sendto(sockSrv, sendbuf + tr_idx * PACKSIZE, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
+        printf("[log] server to client file data, seq=%d, checksum=%u\n",
+               tmp->seq, tmp->Checksum);
+        if (sendret < 0){
+            printf("[log] send message error\n");
         }
-        else{ /*wprintf(L"{---CreateThread For Client----------}\n");*/}
-        CloseHandle(hThread);
     }// for
 }
 
@@ -185,8 +204,11 @@ int main(){
     }
     wprintf(L"==============================================================\n");
 
+    //init
+    state = 0;
+    rpkg = new UDPPackage();initUDPPackage(rpkg);
+    spkg = new UDPPackage();initUDPPackage(spkg);
     int len = sizeof(SOCKADDR);
-
     memset(sendbuf, 0, sizeof(sendbuf));
 
     //creat TimerQueue
@@ -199,7 +221,7 @@ int main(){
     //读文件，file_data读到整个文件
     printf("[input] please input a infilename under dir test/* (such as: test/1.jpg): \n");
     #if debug
-        strcpy(infilename,"test/3.jpg");
+        strcpy(infilename,"test/helloworld.txt");
     #else
         scanf("%s", infilename);
     #endif
@@ -259,12 +281,13 @@ int main(){
                     #if debug
                         printf("state 2:\n");
                     #endif
+                    bufferIsEnd(SEQMAX);
                     // 起一个初始发送线程，用来连续发送最开始的N次，这里要立即转到状态3
-                    DWORD dwState2ThreadId;
-                    HANDLE hState2Thread = CreateThread(NULL, NULL, State2SendThread, NULL, 0, &dwState2ThreadId);
+                    hState2Thread = CreateThread(NULL, NULL, State2SendThread, NULL, 0, &dwState2ThreadId);
                     if (hState2Thread == NULL){
                         wprintf(L"{---CreateState2Thread error: %d}\n", GetLastError());
-                        return 1;
+                        // return 1;
+                        system("pause");
                     }
                     else{ /*wprintf(L"{---CreateThread For Client----------}\n");*/}
                     CloseHandle(hState2Thread);
@@ -277,27 +300,34 @@ int main(){
                     recvret = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len);
                     if (recvret <= 0){
                         wprintf(L"[log] server recvfrom error!\n");
-                        return 1;
+                        // return 1;
+                        system("pause");
                     }
                     if (rpkg->ack >= base){
-                        int n = (rpkg->ack + 1 - base + SEQMAX) % SEQMAX;
-                        bufferIsEnd(n);
+                        step_n = (rpkg->ack + 1 - base + SEQMAX) % SEQMAX;
+                        bufferIsEnd(step_n);
                         //销毁 < base的timer
-                        for(int del_idx = base; del_idx < (base + n); ++del_idx){
+                        for(int del_idx = base; del_idx < (base + step_n); ++del_idx){
                             DeleteTimerQueueTimer(hTimerQueue, hTimer[del_idx],  NULL);
                         }
                         base = (rpkg->ack + 1) % SEQMAX;
                         while(seq - 1 < base + N){
                             //创建sendThread
+                            // Sleep(5000);
                             hThread = CreateThread(NULL, NULL, sendThread, (LPVOID)(seq-1), 0, &dwThreadId);
                             if (hThread == NULL){
                                 wprintf(L"{---CreateThread error: %d}\n", GetLastError());
-                                return 1;
+                                // return 1;
+                                system("pause");
                             }
-                            else{ /*wprintf(L"{---CreateThread For Client----------}\n");*/}
+                            else{
+                                int time_idx = (seq-1+SEQMAX) % SEQMAX;
+                                CreateTimerQueueTimer( &hTimer[time_idx], hTimerQueue, (WAITORTIMERCALLBACK)TimerRoutine, NULL, RTO, RTO, 0);
+                            }
                             CloseHandle(hThread);
                             seq = (base == 0) ? ((seq + 1) % SEQMAX) : (seq + 1);//让seq一直加下去，直到base回到0 seq再取模，解决窗口滑到底要循环的问题
                         }
+                        printf("[log] client to server ACK, seq=%d, ack=%d\n", rpkg->seq, rpkg->ack);
                     }
                     else{/*do nothing*/}
                     break;
@@ -305,6 +335,9 @@ int main(){
                     #if debug
                         printf("state 4:\n");
                     #endif
+                    Sleep(100000);//TODO:这里必须同步所有线程结束
+                    DeleteTimerQueueEx(hTimerQueue, NULL);
+
                     initUDPPackage(spkg);
                     spkg->FLAG = FIN;
                     spkg->seq = seq; seq = (seq+1)%SEQMAX;
@@ -349,8 +382,11 @@ int main(){
         }//while
     }//if
 
+    Sleep(10000);//wait for send done
+
     delete[] file_data;
-    DeleteTimerQueueEx(hTimerQueue, NULL);
+
+    // DeleteTimerQueueEx(hTimerQueue, NULL);
 
     system("pause");
     closesocket(sockSrv);

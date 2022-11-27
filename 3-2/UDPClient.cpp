@@ -9,21 +9,55 @@
 #include<windows.h>
 using namespace std;
 
+SOCKET sockClient;
+sockaddr_in addrSrv;
+//状态
 int state = 0;
+//thread
+HANDLE hThread;
+HANDLE hWriteThread;
+DWORD dwThreadId;
 //滑动窗口
-int slide_left = 0;
-int slide_right = slide_left + N;//right是滑动窗口右边界+1
+int base = 0;//值等于BUFSIZE则重新置0
 //缓冲区
 char recvbuf[BUFSIZE];
-int base = 0;//值等于BUFSIZE则重新置0
 //统计写入量
 float outputLen = 0.0;
-//seq, ack是累积确认的最高ack
+//seq, ack
 int seq = 0, ack = 0;
+//pkg
+UDPPackage *rpkg;
+UDPPackage *spkg;
 
 bool CONNECT = true;
+//file
+ofstream outfile;
 
-int time = 2000;
+
+DWORD WINAPI ackThread(LPVOID lparam){
+    int cumulative_ack = (int)lparam;
+    initUDPPackage(spkg);
+    spkg->FLAG = ACK;
+    spkg->seq = seq;
+    seq = (seq + 1) % SEQMAX;
+    spkg->ack = (cumulative_ack + SEQMAX) % SEQMAX;
+    spkg->WINDOWSIZE = N;
+    sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, sizeof(SOCKADDR));
+    printf("[log] client to server ACK, seq=%d,ack=%d Recv Slide Window Current Size=%d\n", spkg->seq, spkg->ack, spkg->WINDOWSIZE);
+    return 0;
+}
+
+DWORD WINAPI writeThread(LPVOID lparam){
+    Sleep(100);
+    int t_base = (int)lparam;
+    UDPPackage *tmp = (UDPPackage *)(recvbuf + t_base * PACKSIZE);
+    outfile.write(tmp->data, tmp->Length);
+    outputLen += (float)tmp->Length;
+    return 0;
+}
+
+
+
 
 int main(){
     //start
@@ -38,7 +72,7 @@ int main(){
         wprintf(L"[log] WSAStartup Success\n");
     }
     //socket
-    SOCKET sockClient = socket(AF_INET, SOCK_DGRAM, 0);
+    sockClient = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockClient == INVALID_SOCKET) {
         wprintf(L"[log] socket function failed with error: %u\n", WSAGetLastError());
         WSACleanup();
@@ -47,28 +81,27 @@ int main(){
         wprintf(L"[log] socket function Success\n");
     }
 
-    sockaddr_in addrSrv;
     addrSrv.sin_family = AF_INET;
     addrSrv.sin_addr.s_addr = inet_addr("127.0.0.1");
     addrSrv.sin_port = htons(4001);
 
-    UDPPackage *rpkg = new UDPPackage(); initUDPPackage(rpkg);//收
-    UDPPackage *spkg = new UDPPackage(); initUDPPackage(spkg);//发
+    //init
+    rpkg = new UDPPackage(); initUDPPackage(rpkg);//收
+    spkg = new UDPPackage(); initUDPPackage(spkg);//发
 
     int len = sizeof(SOCKADDR);
     int recvret = -1;
-
+    memset(recvbuf, 0, sizeof(recvbuf));
 
     //file handle
     wprintf(L"==============================================================\n");
     printf("[input] input your output file path(output/*): \n");
     #if debug
-        strcpy(outfilename,"output/3.jpg");
+        strcpy(outfilename,"output/helloworld.txt");
     #else
         scanf("%s", outfilename);
     #endif
     wprintf(L"==============================================================\n");
-    ofstream outfile;
     outfile.open(outfilename, ofstream::out | ios::binary | ios::app);
     if (!outfile){
         printf("[log] open file error, file name:%s\n", outfilename);
@@ -106,64 +139,39 @@ int main(){
                 }
                 break;
             case 1: //接收文件，在此状态下不停接收，完毕后状态跳转
-
                 #if debug
                     printf("state 1 recv:\n");
                 #endif
-                for (int i = 0; i < N; ++i,++base){
-                    recvret = recvfrom(sockClient, (char *)rpkg, sizeof(*rpkg), 0, (SOCKADDR *)&addrSrv, &len);
-                    if (recvret <= 0){
-                        // do nothing
-                        --base;
-                    }
-                    else if (rpkg->FLAG == FIN){
+                recvret = recvfrom(sockClient, (char *)rpkg, sizeof(*rpkg), 0, (SOCKADDR *)&addrSrv, &len);
+                if (recvret <= 0){/*do nothing*/}
+                else if(rpkg->FLAG != FIN){
+                    if (rpkg->seq == ack && !checksumFunc(rpkg, rpkg->Length + UDPHEADLEN)){
+                        printf("[log] server to client file data, seq=%d, checksum=%u, Send Slide Window Size=%d\n",
+                                    rpkg->seq, rpkg->Checksum, rpkg->WINDOWSIZE);
                         ack = (rpkg->seq + 1) % SEQMAX;
-                        // ack = rpkg->seq % SEQMAX;
-                        --base;
-                        state = 2;
-                        break;
+                        memcpy(recvbuf + base*PACKSIZE, (char*)rpkg, sizeof(*rpkg));
+                        base = (ack - 1 + SEQMAX) % SEQMAX;//base下标值从0开始，ack从1开始
+
+                        hWriteThread = CreateThread(NULL, NULL, writeThread, (LPVOID)(base - 1), 0, &dwThreadId);
+                        if (hWriteThread == NULL){
+                            wprintf(L"{---CreateWriteThread error: %d}\n", GetLastError());
+                            return 1;
+                        }
+                        else{ /*wprintf(L"{---CreateThread For Client----------}\n");*/}
+                        CloseHandle(hWriteThread);
+                    }else if(rpkg->seq > ack){/*ack not change*/}
+
+                    hThread = CreateThread(NULL, NULL, ackThread, (LPVOID)(ack - 1), 0, &dwThreadId);
+                    if (hThread == NULL){
+                        wprintf(L"{---CreateThread error: %d}\n", GetLastError());
+                        return 1;
                     }
-                    else{
-                        if (ack == rpkg->seq && !checksumFunc(rpkg, rpkg->Length + UDPHEADLEN))
-                        {
-                            ack = (rpkg->seq + 1) % SEQMAX;
-                            printf("[log] server to client file data, seq=%d, checksum=%u, Send Slide Window Size=%d\n",
-                                rpkg->seq, rpkg->Checksum, rpkg->WINDOWSIZE);
-                            //写入缓冲区or写入文件
-                            if (base < SEQMAX){
-                                memcpy(recvbuf + base*PACKSIZE, (char*)rpkg, sizeof(*rpkg));
-                            }else{
-                                base %= SEQMAX;
-                                //buf已经有的写入文件
-                                for (int j = 0; j < (BUFSIZE/PACKSIZE); ++j){
-                                    UDPPackage* tmp = (UDPPackage*)(recvbuf + j*PACKSIZE);
-                                    outfile.write(tmp->data, tmp->Length);
-                                    outputLen += (float)tmp->Length;
-                                }
-                                //本次收到的重新存入buf
-                                memcpy(recvbuf + base*PACKSIZE, (char*)rpkg, sizeof(*rpkg));
-                            }
-                        }
-                        else{
-                            //失序
-                            --base;
-                        }
-                    }//if-elif-else
-                }//for
-
-                if (state != 2){
-                    initUDPPackage(spkg);
-                    spkg->FLAG = ACK;
-                    spkg->seq = seq;
-                    seq = (seq + 1) % SEQMAX;
-                    spkg->ack = (ack-1+SEQMAX) % SEQMAX; //连续收到最高的ack
-                    spkg->WINDOWSIZE = N;
-                    sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
-                    printf("[log] client to server Cumulative ACK, seq=%d,ack=%d Recv Slide Window Current Size=%d\n", spkg->seq, spkg->ack, spkg->WINDOWSIZE);
-                }
-
-                printf("[log] Recv Slide Window Current Position=%d\n", base*PACKSIZE);
-
+                    else{ /*wprintf(L"{---CreateThread For Client----------}\n");*/}
+                    CloseHandle(hThread);
+                }else{
+                    state = 2;
+                    continue;
+                }//if-elif-else
                 break;
             case 2: //挥手，回复ACK
                 #if debug
@@ -176,15 +184,6 @@ int main(){
                 spkg->ack = ack;
                 sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
                 printf("[log] client to server ACK, seq=%d,ack=%d\n", spkg->seq, spkg->ack);
-
-                //剩余的buf写入文件
-                if (base != 0){
-                    for (int j = 0; j < base; ++j){
-                        UDPPackage *tmp = (UDPPackage *)(recvbuf + j * PACKSIZE);
-                        outfile.write(tmp->data, tmp->Length);
-                        outputLen += (float)tmp->Length;
-                    }
-                }
 
                 state = 3;
                 break;
@@ -208,6 +207,8 @@ int main(){
                 break;
         }//switch
     }//while
+
+    Sleep(1000);//wait for write done
 
     printf("[log] outputLen=%fMB\n", outputLen/1048576.0);
     outfile.close();
