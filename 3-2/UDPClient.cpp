@@ -18,6 +18,12 @@ char recvbuf[BUFSIZE];
 int base = 0;//值等于BUFSIZE则重新置0
 //统计写入量
 float outputLen = 0.0;
+//seq, ack是累积确认的最高ack
+int seq = 0, ack = 0;
+
+bool CONNECT = true;
+
+int time = 2000;
 
 int main(){
     //start
@@ -40,9 +46,6 @@ int main(){
     }else{
         wprintf(L"[log] socket function Success\n");
     }
-    int time = 2000;
-    int setoptres;
-
 
     sockaddr_in addrSrv;
     addrSrv.sin_family = AF_INET;
@@ -51,11 +54,10 @@ int main(){
 
     UDPPackage *rpkg = new UDPPackage(); initUDPPackage(rpkg);//收
     UDPPackage *spkg = new UDPPackage(); initUDPPackage(spkg);//发
-    int seq = 0, ack = 0; //client seq, ack, can be random only at init
+
     int len = sizeof(SOCKADDR);
     int recvret = -1;
 
-    bool CONNECT = true;
 
     //file handle
     wprintf(L"==============================================================\n");
@@ -104,10 +106,7 @@ int main(){
                 }
                 break;
             case 1: //接收文件，在此状态下不停接收，完毕后状态跳转
-                // setoptres = setsockopt(sockClient, SOL_SOCKET, SO_RCVTIMEO, (char*)&time, sizeof(time));
-                // if (setoptres == SOCKET_ERROR){
-                //     wprintf(L"setsockopt for SO_RCVTIMEO failed with error: %u\n", WSAGetLastError());
-                // }
+
                 #if debug
                     printf("state 1 recv:\n");
                 #endif
@@ -119,13 +118,14 @@ int main(){
                     }
                     else if (rpkg->FLAG == FIN){
                         ack = (rpkg->seq + 1) % SEQMAX;
+                        // ack = rpkg->seq % SEQMAX;
                         --base;
                         state = 2;
                         break;
                     }
                     else{
                         if (ack == rpkg->seq && !checksumFunc(rpkg, rpkg->Length + UDPHEADLEN))
-                        { //没错
+                        {
                             ack = (rpkg->seq + 1) % SEQMAX;
                             printf("[log] server to client file data, seq=%d, checksum=%u, Send Slide Window Size=%d\n",
                                 rpkg->seq, rpkg->Checksum, rpkg->WINDOWSIZE);
@@ -145,7 +145,7 @@ int main(){
                             }
                         }
                         else{
-                            //失序 do nothing
+                            //失序
                             --base;
                         }
                     }//if-elif-else
@@ -156,7 +156,7 @@ int main(){
                     spkg->FLAG = ACK;
                     spkg->seq = seq;
                     seq = (seq + 1) % SEQMAX;
-                    spkg->ack = ack; //连续收到最高的ack
+                    spkg->ack = (ack-1+SEQMAX) % SEQMAX; //连续收到最高的ack
                     spkg->WINDOWSIZE = N;
                     sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
                     printf("[log] client to server Cumulative ACK, seq=%d,ack=%d Recv Slide Window Current Size=%d\n", spkg->seq, spkg->ack, spkg->WINDOWSIZE);

@@ -4,6 +4,8 @@
 #include<stdint.h>
 #include<WinSock2.h>
 #include<WinUser.h>
+#include <Windows.h>
+#include<atomic>
 using namespace std;
 //debug
 #define debug true
