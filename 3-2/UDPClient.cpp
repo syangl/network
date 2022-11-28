@@ -13,10 +13,6 @@ SOCKET sockClient;
 sockaddr_in addrSrv;
 //状态
 int state = 0;
-//thread
-HANDLE hThread;
-HANDLE hWriteThread;
-DWORD dwThreadId;
 //滑动窗口
 int base = 0;//值等于BUFSIZE则重新置0
 //缓冲区
@@ -32,31 +28,6 @@ UDPPackage *spkg;
 bool CONNECT = true;
 //file
 ofstream outfile;
-
-
-DWORD WINAPI ackThread(LPVOID lparam){
-    int cumulative_ack = (int)lparam;
-    initUDPPackage(spkg);
-    spkg->FLAG = ACK;
-    spkg->seq = seq;
-    seq = (seq + 1) % SEQMAX;
-    spkg->ack = (cumulative_ack + SEQMAX) % SEQMAX;
-    spkg->WINDOWSIZE = N;
-    sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, sizeof(SOCKADDR));
-    printf("[log] client to server ACK, seq=%d,ack=%d Recv Slide Window Current Size=%d\n", spkg->seq, spkg->ack, spkg->WINDOWSIZE);
-    return 0;
-}
-
-DWORD WINAPI writeThread(LPVOID lparam){
-    Sleep(100);
-    int t_base = (int)lparam;
-    UDPPackage *tmp = (UDPPackage *)(recvbuf + t_base * PACKSIZE);
-    outfile.write(tmp->data, tmp->Length);
-    outputLen += (float)tmp->Length;
-    return 0;
-}
-
-
 
 
 int main(){
@@ -138,36 +109,36 @@ int main(){
                     state = 1;
                 }
                 break;
-            case 1: //接收文件，在此状态下不停接收，完毕后状态跳转
+            case 1: //接收 初始ack = 1
                 #if debug
-                    printf("state 1 recv:\n");
+                    // printf("state 1 recv:\n");
                 #endif
                 recvret = recvfrom(sockClient, (char *)rpkg, sizeof(*rpkg), 0, (SOCKADDR *)&addrSrv, &len);
-                if (recvret <= 0){/*do nothing*/}
+                if (recvret <= 0){
+                    printf("recvfrom fail\n");
+                }
                 else if(rpkg->FLAG != FIN){
                     if (rpkg->seq == ack && !checksumFunc(rpkg, rpkg->Length + UDPHEADLEN)){
                         printf("[log] server to client file data, seq=%d, checksum=%u, Send Slide Window Size=%d\n",
                                     rpkg->seq, rpkg->Checksum, rpkg->WINDOWSIZE);
+
                         ack = (rpkg->seq + 1) % SEQMAX;
+
                         memcpy(recvbuf + base*PACKSIZE, (char*)rpkg, sizeof(*rpkg));
-                        base = (ack - 1 + SEQMAX) % SEQMAX;//base下标值从0开始，ack从1开始
+                        outfile.write(rpkg->data, rpkg->Length);
+                        outputLen += (float)rpkg->Length;
 
-                        hWriteThread = CreateThread(NULL, NULL, writeThread, (LPVOID)(base - 1), 0, &dwThreadId);
-                        if (hWriteThread == NULL){
-                            wprintf(L"{---CreateWriteThread error: %d}\n", GetLastError());
-                            return 1;
-                        }
-                        else{ /*wprintf(L"{---CreateThread For Client----------}\n");*/}
-                        CloseHandle(hWriteThread);
+                        base = (base + 1) % BUFNUM;//base下标值从0开始，ack从1开始
+
+                        //回复ACK
+                        initUDPPackage(spkg);
+                        spkg->FLAG = ACK;
+                        spkg->seq = seq;
+                        spkg->ack = ack - 1;//期望的下一个ack-1
+                        sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
+                        printf("[log] client to server ACK, ack=%d\n", spkg->ack);
+                        Sleep(20);
                     }else if(rpkg->seq > ack){/*ack not change*/}
-
-                    hThread = CreateThread(NULL, NULL, ackThread, (LPVOID)(ack - 1), 0, &dwThreadId);
-                    if (hThread == NULL){
-                        wprintf(L"{---CreateThread error: %d}\n", GetLastError());
-                        return 1;
-                    }
-                    else{ /*wprintf(L"{---CreateThread For Client----------}\n");*/}
-                    CloseHandle(hThread);
                 }else{
                     state = 2;
                     continue;
@@ -179,7 +150,7 @@ int main(){
                 #endif
                 printf("[log] server to client FIN, seq=%d\n", rpkg->seq);
                 initUDPPackage(spkg);
-                spkg->FLAG = ACK;
+                spkg->FLAG = FINACK;
                 spkg->seq = seq; seq = (seq+1)%SEQMAX;
                 spkg->ack = ack;
                 sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
@@ -208,7 +179,6 @@ int main(){
         }//switch
     }//while
 
-    Sleep(1000);//wait for write done
 
     printf("[log] outputLen=%fMB\n", outputLen/1048576.0);
     outfile.close();

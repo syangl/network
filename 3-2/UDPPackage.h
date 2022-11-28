@@ -6,30 +6,35 @@
 #include<WinUser.h>
 #include <Windows.h>
 #include<atomic>
+#include<limits.h>
 using namespace std;
 //debug
 #define debug true
 
 //缓冲区大小4202496B（512*8208B）
 #define BUFSIZE 4202496
+#define BUFNUM 512 //(BUFSIZE/PACKSIZE)
 //报文首部长度16B
 #define UDPHEADLEN 16
 //报文data最大8KB
 #define PACKDATASIZE 8192
 //一个pkg大小8208B
 int PACKSIZE = PACKDATASIZE+UDPHEADLEN;
-//序号范围0~511，等于报文数量
-int SEQMAX = BUFSIZE/PACKSIZE;//512
+//序号范围0~2^32-1
+uint32_t SEQMAX = UINT_MAX;
 // FLAG VALUE
 #define SYN 100
 #define SYNACK 101
 #define ACK 1
 #define FIN 10
+#define FINACK 11
 
-//滑动窗口大小N个报文，小于(BUFSIZE/PACKSIZE)/2
+//滑动窗口大小N个报文，小于BUFNUM/2
 #define N 128
 //滑动窗口大小B（报文数量N（报文按最大长度计算））
 int SLIDE_WINSIZE = N*PACKDATASIZE;
+//timer handle num
+#define TIMER_MAX BUFNUM
 
 //文件路径
 char infilename[100]; //(server use) "test/1.jpg" "test/2.jpg" "test/3.jpg" "test/helloworld.txt"
