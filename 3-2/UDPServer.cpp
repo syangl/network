@@ -12,7 +12,8 @@ SOCKET sockSrv;
 sockaddr_in addrClient;
 //状态
 atomic_int32_t state;
-DWORD RTO = 4000;//ms
+//ms
+DWORD RTO = 3000;
 //thread
 HANDLE hThread;
 HANDLE hCheckFinThread;
@@ -24,7 +25,6 @@ atomic_int32_t old_base;
 // int nextseq = 0;
 //缓冲区
 char sendbuf[BUFSIZE];
-int buf_endpos = 511;
 //是否传输结束
 atomic_bool isEnd;
 atomic_int32_t timerCount;
@@ -48,10 +48,9 @@ char *file_data;
 int sent_offset = 0;
 
 //定时器
-static HANDLE hTimerQueue;
-static HANDLE hTimer[TIMER_MAX];//每个定时器记录自己被创建时对应的报文序号
-int timer_idx = 0;
-
+HANDLE hTimerQueue;
+HANDLE hTimer[TIMER_MAX];//发送每个报文序号时创建这个序号对应的定时器
+bool timer_valid[TIMER_MAX];//false时定时器无效，不起作用
 //use for bufferIsEnd
 int step_n = 0;
 
@@ -101,6 +100,9 @@ int main(){
     wprintf(L"==============================================================\n");
 
     //init
+    for (int i = 0; i < TIMER_MAX; ++i){
+        timer_valid[i] = true;
+    }
     timerCount = 0;
     isEnd = false;
     old_base = 0;
@@ -151,13 +153,11 @@ int main(){
         spkg->WINDOWSIZE = N;                                           //设置发送窗口当前大小
         spkg->Checksum = checksumFunc(spkg, spkg->Length + UDPHEADLEN); //校验和最后算
         memcpy(sendbuf + i * PACKSIZE, (char *)spkg, sizeof(*spkg));
-        // printf("sent_offset=%d\n",sent_offset);
         //若文件读完了则终止
         if (sent_offset >= file_len){
             ((UDPPackage *)(sendbuf + i%BUFNUM * PACKSIZE))->FLAG = FIN;
             break;
         }
-        //printf("sendbuf i=%d, FLAG=%d\n",i, ((UDPPackage *)(sendbuf + i * PACKSIZE))->FLAG);
     }
 
     //create send thread
@@ -165,7 +165,6 @@ int main(){
     if (hThread == NULL){
         wprintf(L"{---CreateSendThread error: %d}\n", GetLastError());
         return 1;
-        // system("pause");
     }
     CloseHandle(hThread);
     // check fin thread
@@ -173,7 +172,6 @@ int main(){
     if (hCheckFinThread == NULL){
         wprintf(L"{---CreateCheckFinThread error: %d}\n", GetLastError());
         return 1;
-        // system("pause");
     }
     CloseHandle(hCheckFinThread);
 
@@ -233,14 +231,11 @@ int main(){
                             step_n = (rpkg->ack - base + BUFNUM) % BUFNUM;
                             //销毁 < base的timer
                             for (int del_idx = base; del_idx < (base + step_n); ++del_idx){
-                                // Sleep(500);
-                                DeleteTimerQueueTimer(hTimerQueue, hTimer[del_idx], NULL);
-                                hTimer[del_idx] = NULL;
+                                DeleteTimerQueueTimer(hTimerQueue, hTimer[del_idx%BUFNUM], NULL);
+                                timer_valid[del_idx%BUFNUM] = false;
                                 --timerCount;
-                                // printf("delete timer idx = %d\n",del_idx);
                             }
-                            printf("[log recvThread] client to server ACK, ack=%d\n", rpkg->ack);
-                            // printf("base=%d\n",(int32_t)base);
+                            printf("[log recvThread] client to server ACK, ack=%d, now base=%d\n", rpkg->ack, (int)base);
                             //read
                             if (sent_offset < file_len){
                                 for (int i = 0; i < step_n; ++i){
@@ -267,7 +262,7 @@ int main(){
                             //base变化时窗口滑动，发送线程才会捕捉到变化
                             base = rpkg->ack % BUFNUM; // base是下标，本来就比ack和seq小1
                         }
-                        else{ /*do nothing*/}
+                        else{ /*do nothing 忽略重复ack*/}
                     }
                     break;
                 case 4: //传输完毕，单向传输，挥手
@@ -335,27 +330,23 @@ int main(){
 
 //send thread
 DWORD WINAPI sendThread(LPVOID lparam){
-    bool threadEnd = false;
     while (true){
         if (old_base != base){//窗口滑动了
             UDPPackage *tmp = (UDPPackage *)(sendbuf + buf_idx * PACKSIZE); //buf_idx start from 0
             //结束
             if (tmp->FLAG == FIN){
                 ((UDPPackage *)(sendbuf + (buf_idx-1) * PACKSIZE))->FLAG = 0;
-                threadEnd = true;
-            }
-            //create timer
-            if (hTimer[buf_idx] != NULL){
-                DeleteTimerQueueTimer(hTimerQueue, hTimer[buf_idx],  NULL);
+                isEnd = true;
+                return 0;
             }
             const int resent_seq = tmp->seq;
             CreateTimerQueueTimer( &hTimer[buf_idx], hTimerQueue, (WAITORTIMERCALLBACK)TimerRoutine, (PVOID)resent_seq, RTO, RTO, 0);
+            timer_valid[buf_idx] = true;
             ++timerCount;
-            // printf("resent_seq=%d, buf_idx=%d\n",resent_seq,buf_idx);
             //send
             sendret = sendto(sockSrv, sendbuf + buf_idx * PACKSIZE, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
-            printf("[log sendThread] server to client file data, seq=%d, checksum=%u\n",
-                   tmp->seq, tmp->Checksum);
+            printf("[log sendThread] server to client file data, seq=%d, checksum=%u, timer_idx=%d, resent_seq=%d\n",
+                   tmp->seq, tmp->Checksum, buf_idx, resent_seq);
             if (sendret < 0){
                 printf("[log sendThread] send message error\n");
             }
@@ -363,11 +354,6 @@ DWORD WINAPI sendThread(LPVOID lparam){
             Sleep(20);
             if(old_base != base){
                 old_base = (old_base + 1) % BUFNUM;
-            }
-
-            if (threadEnd){
-                isEnd = true;
-                return 0;
             }
         }//if
     }//while
@@ -380,17 +366,13 @@ DWORD WINAPI sendThread(LPVOID lparam){
 static VOID CALLBACK TimerRoutine(PVOID lpParam, BOOLEAN TimerOrWaitFired){
     int t_seq = (int)lpParam;
     int t_buf_idx = (t_seq - 1 + BUFNUM) % BUFNUM;
-    printf("[TimerRoutine %d] resent %d to %d\n",t_seq, t_seq, (t_seq + N)%BUFNUM);
-    for (int i = t_buf_idx; i < (t_buf_idx+N); ++i){
-        // UDPPackage *tmp = (UDPPackage *)(sendbuf + i % BUFNUM * PACKSIZE);
-        if (((UDPPackage *)(sendbuf + i % BUFNUM * PACKSIZE))->FLAG != FIN){
-            sendret = sendto(sockSrv, sendbuf + i % BUFNUM * PACKSIZE, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
-            // printf("[log TimerRoutine %d] server to client file data, seq=%d, checksum=%u\n", t_seq,
-            //        tmp->seq, tmp->Checksum);
-            if (sendret < 0){
-                printf("[log TimerRoutine %d] send message error\n", ((UDPPackage *)(sendbuf + i % BUFNUM * PACKSIZE))->seq);
-            }
-            Sleep(20);
+
+    UDPPackage *tmp = (UDPPackage *)(sendbuf + t_buf_idx % BUFNUM * PACKSIZE);
+    if (tmp->FLAG != FIN && timer_valid[t_buf_idx]){
+        sendret = sendto(sockSrv, sendbuf + t_buf_idx % BUFNUM * PACKSIZE, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
+        printf("[TimerRoutine %d] resent %d to %d\n", t_seq, t_seq, (t_seq + N) % BUFNUM);
+        if (sendret < 0){
+            printf("[log TimerRoutine %d] send message error\n", ((UDPPackage *)(sendbuf + t_buf_idx % BUFNUM * PACKSIZE))->seq);
         }
     }
 }
@@ -398,13 +380,17 @@ static VOID CALLBACK TimerRoutine(PVOID lpParam, BOOLEAN TimerOrWaitFired){
 //轮询检查，如果定时器全部销毁且传输完毕，说明传输结束，挥手断连
 DWORD WINAPI checkFinThread(LPVOID lparam){
     while(true){
-        if (isEnd && !timerCount){//TODO:计数为零了但没有删除全部的定时器？定时器必须全部销毁才可以FIN，否则就提前结束了
-            initUDPPackage(spkg);
-            spkg->FLAG = FIN;
-            spkg->seq = seq;
-            seq = (seq + 1) % SEQMAX;
-            sendto(sockSrv, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
-            return 0;
+        if (isEnd && !timerCount){
+            Sleep(RTO);
+            if (timerCount==0){
+                initUDPPackage(spkg);
+                spkg->FLAG = FIN;
+                spkg->seq = seq;
+                seq = (seq + 1) % SEQMAX;
+                sendto(sockSrv, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
+                printf("[log] server to client FIN, seq=%d\n", spkg->seq);
+                return 0;
+            }
         }
     }
     return 0;
