@@ -68,7 +68,8 @@ int main(){
     wprintf(L"==============================================================\n");
     printf("[input] input your output file path(output/*): \n");
     #if debug
-        strcpy(outfilename,"output/helloworld.txt");
+        string str = "output/"+debug_filename;
+        strcpy(outfilename, str.c_str());
     #else
         scanf("%s", outfilename);
     #endif
@@ -137,7 +138,6 @@ int main(){
                         spkg->ack = ack - 1;//期望的下一个ack-1
                         sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
                         printf("[log] client to server ACK, ack=%d\n", spkg->ack);
-                        Sleep(20);
                     }else if(rpkg->seq > ack){/*ack not change*/}
                 }else{
                     state = 2;

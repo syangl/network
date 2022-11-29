@@ -9,7 +9,7 @@
 #include<limits.h>
 using namespace std;
 //debug
-#define debug true
+#define debug false
 
 //缓冲区大小4202496B（512*8208B）
 #define BUFSIZE 4202496
@@ -30,7 +30,7 @@ uint32_t SEQMAX = UINT_MAX;
 #define FINACK 11
 
 //滑动窗口大小N个报文，小于BUFNUM/2
-#define N 128
+#define N 64
 //滑动窗口大小B（报文数量N（报文按最大长度计算））
 int SLIDE_WINSIZE = N*PACKDATASIZE;
 //timer handle num
@@ -39,6 +39,7 @@ int SLIDE_WINSIZE = N*PACKDATASIZE;
 //文件路径
 char infilename[100]; //(server use) "test/1.jpg" "test/2.jpg" "test/3.jpg" "test/helloworld.txt"
 char outfilename[100]; //(client use) "output/1.jpg" "output/2.jpg" "output/3.jpg" "output/helloworld.txt"
+string debug_filename = "2.jpg";
 
 struct UDPPackage
 {//首部16字节

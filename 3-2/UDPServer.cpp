@@ -12,12 +12,12 @@ SOCKET sockSrv;
 sockaddr_in addrClient;
 //状态
 atomic_int32_t state;
-DWORD RTO = 3000;//ms
+DWORD RTO = 4000;//ms
 //thread
 HANDLE hThread;
+HANDLE hCheckFinThread;
 DWORD dwThreadId;
-DWORD dwState2ThreadId;
-HANDLE hState2Thread;
+DWORD dwCheckFinThread;
 //滑动窗口
 atomic_int32_t base;//值等于BUFSIZE则重新置0
 atomic_int32_t old_base;
@@ -26,7 +26,8 @@ atomic_int32_t old_base;
 char sendbuf[BUFSIZE];
 int buf_endpos = 511;
 //是否传输结束
-bool isEnd = false;
+atomic_bool isEnd;
+atomic_int32_t timerCount;
 
 bool CONNECT = true;
 int recvret = -1;
@@ -56,6 +57,7 @@ int step_n = 0;
 
 static VOID CALLBACK TimerRoutine(PVOID lpParam, BOOLEAN TimerOrWaitFired);
 DWORD WINAPI sendThread(LPVOID lparam);
+DWORD WINAPI checkFinThread(LPVOID lparam);
 
 int main(){
     //start
@@ -99,6 +101,8 @@ int main(){
     wprintf(L"==============================================================\n");
 
     //init
+    timerCount = 0;
+    isEnd = false;
     old_base = 0;
     base = 0;
     state = 0;
@@ -117,7 +121,8 @@ int main(){
     //读文件，file_data读到整个文件
     printf("[input] please input a infilename under dir test/* (such as: test/1.jpg): \n");
     #if debug
-        strcpy(infilename,"test/helloworld.txt");
+        string str = "test/"+debug_filename;
+        strcpy(infilename, str.c_str());
     #else
         scanf("%s", infilename);
     #endif
@@ -146,9 +151,10 @@ int main(){
         spkg->WINDOWSIZE = N;                                           //设置发送窗口当前大小
         spkg->Checksum = checksumFunc(spkg, spkg->Length + UDPHEADLEN); //校验和最后算
         memcpy(sendbuf + i * PACKSIZE, (char *)spkg, sizeof(*spkg));
+        // printf("sent_offset=%d\n",sent_offset);
         //若文件读完了则终止
         if (sent_offset >= file_len){
-            ((UDPPackage *)(sendbuf + i * PACKSIZE))->FLAG = FIN;
+            ((UDPPackage *)(sendbuf + i%BUFNUM * PACKSIZE))->FLAG = FIN;
             break;
         }
         //printf("sendbuf i=%d, FLAG=%d\n",i, ((UDPPackage *)(sendbuf + i * PACKSIZE))->FLAG);
@@ -157,11 +163,19 @@ int main(){
     //create send thread
     hThread = CreateThread(NULL, NULL, sendThread, NULL, 0, &dwThreadId);
     if (hThread == NULL){
-        wprintf(L"{---CreateThread error: %d}\n", GetLastError());
+        wprintf(L"{---CreateSendThread error: %d}\n", GetLastError());
         return 1;
         // system("pause");
     }
     CloseHandle(hThread);
+    // check fin thread
+    hCheckFinThread = CreateThread(NULL, NULL, checkFinThread, NULL, 0, &dwThreadId);
+    if (hCheckFinThread == NULL){
+        wprintf(L"{---CreateCheckFinThread error: %d}\n", GetLastError());
+        return 1;
+        // system("pause");
+    }
+    CloseHandle(hCheckFinThread);
 
 
     if (retlen && rpkg->FLAG == SYN){
@@ -173,7 +187,6 @@ int main(){
                     #if debug
                         printf("state 0:\n");
                     #endif
-                    seq = 0;
                     initUDPPackage(spkg);
                     spkg->FLAG = SYNACK;
                     spkg->seq = 0; //seq = (seq+1)%SEQMAX;
@@ -203,9 +216,9 @@ int main(){
                     }
                     break;
                 case 2://recv
-                    // #if debug
-                    //     printf("state 2:\n");
-                    // #endif
+                    #if debug
+                        printf("state 2:\n");
+                    #endif
                     recvret = recvfrom(sockSrv, (char *)rpkg, sizeof(*rpkg), 0, (SOCKADDR *)&addrClient, &len);
                     if (recvret <= 0){
                         /*do nothing*/
@@ -217,12 +230,17 @@ int main(){
                     }
                     else{
                         if (rpkg->ack >= base){//已被确认，滑动窗口
-                            printf("[log] client to server ACK, ack=%d\n", rpkg->ack);
                             step_n = (rpkg->ack - base + BUFNUM) % BUFNUM;
                             //销毁 < base的timer
                             for (int del_idx = base; del_idx < (base + step_n); ++del_idx){
+                                // Sleep(500);
                                 DeleteTimerQueueTimer(hTimerQueue, hTimer[del_idx], NULL);
+                                hTimer[del_idx] = NULL;
+                                --timerCount;
+                                // printf("delete timer idx = %d\n",del_idx);
                             }
+                            printf("[log recvThread] client to server ACK, ack=%d\n", rpkg->ack);
+                            // printf("base=%d\n",(int32_t)base);
                             //read
                             if (sent_offset < file_len){
                                 for (int i = 0; i < step_n; ++i){
@@ -235,6 +253,7 @@ int main(){
                                     spkg->WINDOWSIZE = N;                                           //设置发送窗口当前大小
                                     spkg->Checksum = checksumFunc(spkg, spkg->Length + UDPHEADLEN); //校验和最后算
                                     memcpy(sendbuf + (base + i) * PACKSIZE, (char *)spkg, sizeof(*spkg));
+                                    printf("seq=%d\n",((UDPPackage*)(sendbuf + (base + i) * PACKSIZE))->seq);
                                     //若文件读完了则终止
                                     if (sent_offset >= file_len)
                                     {
@@ -246,7 +265,7 @@ int main(){
                                 }
                             }
                             //base变化时窗口滑动，发送线程才会捕捉到变化
-                            base = (rpkg->ack + 1) % BUFNUM;
+                            base = rpkg->ack % BUFNUM; // base是下标，本来就比ack和seq小1
                         }
                         else{ /*do nothing*/}
                     }
@@ -298,7 +317,9 @@ int main(){
         }//while
     }//if
 
-
+    printf("[log] server to client file transmit done, FileLength=%fMB, TotalTransLength=%fMB\n",
+                                (file_len*1.0)/1048576.0, (sent_offset*1.0)/1048576.0);
+    DeleteTimerQueueEx(hTimerQueue, NULL);
     delete[] file_data;
     system("pause");
     closesocket(sockSrv);
@@ -314,14 +335,14 @@ int main(){
 
 //send thread
 DWORD WINAPI sendThread(LPVOID lparam){
+    bool threadEnd = false;
     while (true){
         if (old_base != base){//窗口滑动了
             UDPPackage *tmp = (UDPPackage *)(sendbuf + buf_idx * PACKSIZE); //buf_idx start from 0
             //结束
             if (tmp->FLAG == FIN){
-                ((UDPPackage *)(sendbuf + buf_idx * PACKSIZE))->FLAG = 0;
-                isEnd = true;//TODO:最后两边都关不掉了
-                return 0;
+                ((UDPPackage *)(sendbuf + (buf_idx-1) * PACKSIZE))->FLAG = 0;
+                threadEnd = true;
             }
             //create timer
             if (hTimer[buf_idx] != NULL){
@@ -329,19 +350,24 @@ DWORD WINAPI sendThread(LPVOID lparam){
             }
             const int resent_seq = tmp->seq;
             CreateTimerQueueTimer( &hTimer[buf_idx], hTimerQueue, (WAITORTIMERCALLBACK)TimerRoutine, (PVOID)resent_seq, RTO, RTO, 0);
+            ++timerCount;
+            // printf("resent_seq=%d, buf_idx=%d\n",resent_seq,buf_idx);
             //send
             sendret = sendto(sockSrv, sendbuf + buf_idx * PACKSIZE, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
-            printf("[sendThread] server to client file data, seq=%d, checksum=%u\n",
+            printf("[log sendThread] server to client file data, seq=%d, checksum=%u\n",
                    tmp->seq, tmp->Checksum);
             if (sendret < 0){
-                printf("[sendThread] send message error\n");
+                printf("[log sendThread] send message error\n");
             }
             buf_idx = (buf_idx + 1) % BUFNUM;
-
             Sleep(20);
-
             if(old_base != base){
                 old_base = (old_base + 1) % BUFNUM;
+            }
+
+            if (threadEnd){
+                isEnd = true;
+                return 0;
             }
         }//if
     }//while
@@ -354,20 +380,32 @@ DWORD WINAPI sendThread(LPVOID lparam){
 static VOID CALLBACK TimerRoutine(PVOID lpParam, BOOLEAN TimerOrWaitFired){
     int t_seq = (int)lpParam;
     int t_buf_idx = (t_seq - 1 + BUFNUM) % BUFNUM;
-    for (int i = 0; i < N; ++i){
-        UDPPackage *tmp = (UDPPackage *)(sendbuf + (t_buf_idx + i) * PACKSIZE);
-        sendret = sendto(sockSrv, sendbuf + (t_buf_idx + i) * PACKSIZE, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
-        printf("[TimerRoutine %d] server to client file data, seq=%d, checksum=%u\n",tmp->seq,
-               tmp->seq, tmp->Checksum);
-        if (sendret < 0){
-            printf("[TimerRoutine %d] send message error\n",tmp->seq);
+    printf("[TimerRoutine %d] resent %d to %d\n",t_seq, t_seq, (t_seq + N)%BUFNUM);
+    for (int i = t_buf_idx; i < (t_buf_idx+N); ++i){
+        // UDPPackage *tmp = (UDPPackage *)(sendbuf + i % BUFNUM * PACKSIZE);
+        if (((UDPPackage *)(sendbuf + i % BUFNUM * PACKSIZE))->FLAG != FIN){
+            sendret = sendto(sockSrv, sendbuf + i % BUFNUM * PACKSIZE, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
+            // printf("[log TimerRoutine %d] server to client file data, seq=%d, checksum=%u\n", t_seq,
+            //        tmp->seq, tmp->Checksum);
+            if (sendret < 0){
+                printf("[log TimerRoutine %d] send message error\n", ((UDPPackage *)(sendbuf + i % BUFNUM * PACKSIZE))->seq);
+            }
+            Sleep(20);
         }
-        Sleep(20);
-    }
-    if (isEnd){
-        //TODO:最后两边都关不掉了
-        return;
     }
 }
 
-//TODO:定时器在未超时时没有正常关掉？第一个定时器为什么0号？
+//轮询检查，如果定时器全部销毁且传输完毕，说明传输结束，挥手断连
+DWORD WINAPI checkFinThread(LPVOID lparam){
+    while(true){
+        if (isEnd && !timerCount){//TODO:计数为零了但没有删除全部的定时器？定时器必须全部销毁才可以FIN，否则就提前结束了
+            initUDPPackage(spkg);
+            spkg->FLAG = FIN;
+            spkg->seq = seq;
+            seq = (seq + 1) % SEQMAX;
+            sendto(sockSrv, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
+            return 0;
+        }
+    }
+    return 0;
+}
