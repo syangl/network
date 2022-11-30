@@ -227,7 +227,7 @@ int main(){
                         continue;
                     }
                     else{
-                        if (rpkg->ack >= base){//已被确认，滑动窗口
+                        if (rpkg->ack >= (base+1)){//已被确认，滑动窗口
                             step_n = (rpkg->ack - base + BUFNUM) % BUFNUM;
                             //销毁 < base的timer
                             for (int del_idx = base; del_idx < (base + step_n); ++del_idx){
@@ -370,7 +370,7 @@ static VOID CALLBACK TimerRoutine(PVOID lpParam, BOOLEAN TimerOrWaitFired){
     UDPPackage *tmp = (UDPPackage *)(sendbuf + t_buf_idx % BUFNUM * PACKSIZE);
     if (tmp->FLAG != FIN && timer_valid[t_buf_idx]){
         sendret = sendto(sockSrv, sendbuf + t_buf_idx % BUFNUM * PACKSIZE, sizeof(*spkg), 0, (SOCKADDR *)&addrClient, sizeof(SOCKADDR));
-        printf("[TimerRoutine %d] resent %d to %d\n", t_seq, t_seq, (t_seq + N) % BUFNUM);
+        printf("[TimerRoutine %d] resent %d\n", t_seq, t_seq);
         if (sendret < 0){
             printf("[log TimerRoutine %d] send message error\n", ((UDPPackage *)(sendbuf + t_buf_idx % BUFNUM * PACKSIZE))->seq);
         }
