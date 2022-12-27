@@ -39,7 +39,7 @@ int SLIDE_WINSIZE = N*PACKDATASIZE;
 //文件路径
 char infilename[100]; //(server use) "test/1.jpg" "test/2.jpg" "test/3.jpg" "test/helloworld.txt"
 char outfilename[100]; //(client use) "output/1.jpg" "output/2.jpg" "output/3.jpg" "output/helloworld.txt"
-string debug_filename = "1.jpg";
+string debug_filename = "2.jpg";
 
 struct UDPPackage
 {//首部16字节

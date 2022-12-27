@@ -134,12 +134,13 @@ int main(){
                         //回复ACK
                         initUDPPackage(spkg);
                         spkg->FLAG = ACK;
-                        spkg->seq = seq;
+                        spkg->seq = seq; seq = (seq+1)%SEQMAX;
                         spkg->ack = ack - 1;//期望的下一个ack-1
                         sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
                         printf("[log] client to server ACK, ack=%d\n", spkg->ack);
                     }else if(rpkg->seq > ack){/*ack not change*/}
-                }else{
+                }else{//FIN
+                    ack = (rpkg->seq + 1) % SEQMAX;
                     state = 2;
                     continue;
                 }//if-elif-else
@@ -154,8 +155,7 @@ int main(){
                 spkg->seq = seq; seq = (seq+1)%SEQMAX;
                 spkg->ack = ack;
                 sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
-                printf("[log] client to server ACK, seq=%d,ack=%d\n", spkg->seq, spkg->ack);
-
+                printf("[log] client to server FINACK, seq=%d,ack=%d\n", spkg->seq, spkg->ack);
                 state = 3;
                 break;
             case 3: //收到ACK，断开连接
