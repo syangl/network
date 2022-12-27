@@ -7,7 +7,7 @@
 #include<limits.h>
 using namespace std;
 //debug
-#define debug true
+#define debug false
 
 //缓冲区大小4202496B（512*8208B）
 #define BUFSIZE 4202496
