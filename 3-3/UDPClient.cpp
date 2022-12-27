@@ -1,13 +1,14 @@
 #include<iostream>
 #include<stdio.h>
 #include<time.h>
-// #include<string>
 #include<stdint.h>
 #include<WinSock2.h>
 #include "UDPPackage.h"
 #include<fstream>
 #include<windows.h>
 using namespace std;
+//滑动窗口大小N个报文，小于BUFNUM/2
+#define N 64
 
 SOCKET sockClient;
 sockaddr_in addrSrv;
@@ -112,16 +113,17 @@ int main(){
                 break;
             case 1: //接收 初始ack = 1
                 #if debug
-                    // printf("state 1 recv:\n");
+                    printf("state 1 recv:\n");
                 #endif
                 recvret = recvfrom(sockClient, (char *)rpkg, sizeof(*rpkg), 0, (SOCKADDR *)&addrSrv, &len);
                 if (recvret <= 0){
                     printf("recvfrom fail\n");
                 }
                 else if(rpkg->FLAG != FIN){
+                    printf("rpkg->seq=%d, client-ack=%d\n",rpkg->seq,ack);
                     if (rpkg->seq == ack && !checksumFunc(rpkg, rpkg->Length + UDPHEADLEN)){
-                        printf("[log] server to client file data, seq=%d, checksum=%u, Send Slide Window Size=%d\n",
-                                    rpkg->seq, rpkg->Checksum, rpkg->WINDOWSIZE);
+                        printf("[log] server to client file data, seq=%d, checksum=%u\n",
+                                    rpkg->seq, rpkg->Checksum);
 
                         ack = (rpkg->seq + 1) % SEQMAX;
 
@@ -138,7 +140,15 @@ int main(){
                         spkg->ack = ack - 1;//期望的下一个ack-1
                         sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
                         printf("[log] client to server ACK, ack=%d\n", spkg->ack);
-                    }else if(rpkg->seq > ack){/*ack not change*/}
+                    }else if(rpkg->seq != ack){
+                        //回复重复的ACK
+                        initUDPPackage(spkg);
+                        spkg->FLAG = ACK;
+                        spkg->seq = seq; seq = (seq+1)%SEQMAX;
+                        spkg->ack = ack - 1;//期望的下一个ack-1
+                        sendto(sockClient, (char *)spkg, sizeof(*spkg), 0, (SOCKADDR *)&addrSrv, len);
+                        printf("[log] client to server ACK, ack=%d\n", spkg->ack);
+                    }
                 }else{//FIN
                     ack = (rpkg->seq + 1) % SEQMAX;
                     state = 2;

@@ -1,6 +1,4 @@
-// #include<string>
 #include<string.h>
-// #include<cstring>
 #include<stdint.h>
 #include<WinSock2.h>
 #include<WinUser.h>
@@ -29,10 +27,6 @@ uint32_t SEQMAX = UINT_MAX;
 #define FIN 10
 #define FINACK 11
 
-//滑动窗口大小N个报文，小于BUFNUM/2
-#define N 64
-//滑动窗口大小B（报文数量N（报文按最大长度计算））
-int SLIDE_WINSIZE = N*PACKDATASIZE;
 //timer handle num
 #define TIMER_MAX BUFNUM
 
