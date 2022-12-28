@@ -120,7 +120,7 @@ int main(){
                     printf("recvfrom fail\n");
                 }
                 else if(rpkg->FLAG != FIN){
-                    printf("rpkg->seq=%d, client-ack=%d\n",rpkg->seq,ack);
+                    // printf("rpkg->seq=%d, client-ack=%d\n",rpkg->seq,ack);
                     if (rpkg->seq == ack && !checksumFunc(rpkg, rpkg->Length + UDPHEADLEN)){
                         printf("[log] server to client file data, seq=%d, checksum=%u\n",
                                     rpkg->seq, rpkg->Checksum);
