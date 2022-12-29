@@ -1,8 +1,6 @@
 #include<iostream>
 #include<fstream>
 #include<stdio.h>
-#include<time.h>
-// #include<string>
 #include<stdint.h>
 #include<WinSock2.h>
 #include "UDPPackage.h"
@@ -13,7 +11,7 @@ sockaddr_in addrClient;
 //状态
 atomic_int32_t state;
 //ms
-DWORD RTO = 3000;
+DWORD RTO = 1000;
 //thread
 HANDLE hThread;
 HANDLE hCheckFinThread;
@@ -112,6 +110,8 @@ int main(){
     spkg = new UDPPackage();initUDPPackage(spkg);
     int len = sizeof(SOCKADDR);
     memset(sendbuf, 0, sizeof(sendbuf));
+    auto start_time = std::chrono::high_resolution_clock::now();
+    auto end_time = std::chrono::high_resolution_clock::now();
 
     //creat TimerQueue
     hTimerQueue = CreateTimerQueue();
@@ -206,6 +206,8 @@ int main(){
                     else{
                         //跳转至状态2
                         if (rpkg->FLAG == ACK){
+                            start_time = std::chrono::high_resolution_clock::now();
+
                             ack = (rpkg->seq + 1)%SEQMAX;
                             printf("[log] client to server ACK, seq=%d, ack=%d\n", rpkg->seq, rpkg->ack);
                             state = 2;
@@ -248,7 +250,7 @@ int main(){
                                     spkg->WINDOWSIZE = N;                                           //设置发送窗口当前大小
                                     spkg->Checksum = checksumFunc(spkg, spkg->Length + UDPHEADLEN); //校验和最后算
                                     memcpy(sendbuf + (base + i) * PACKSIZE, (char *)spkg, sizeof(*spkg));
-                                    printf("seq=%d\n",((UDPPackage*)(sendbuf + (base + i) * PACKSIZE))->seq);
+                                    // printf("seq=%d\n",((UDPPackage*)(sendbuf + (base + i) * PACKSIZE))->seq);
                                     //若文件读完了则终止
                                     if (sent_offset >= file_len)
                                     {
@@ -312,8 +314,12 @@ int main(){
         }//while
     }//if
 
+    end_time = std::chrono::high_resolution_clock::now();
+    double time = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count();
+    printf("time=%fs\n",time/1e9);
     printf("[log] server to client file transmit done, FileLength=%fMB, TotalTransLength=%fMB\n",
                                 (file_len*1.0)/1048576.0, (sent_offset*1.0)/1048576.0);
+    printf("throughout=%fMB/s\n",(sent_offset*1.0/1048576.0)*1e9/time);
     DeleteTimerQueueEx(hTimerQueue, NULL);
     delete[] file_data;
     system("pause");

@@ -1,8 +1,8 @@
-// #include<string>
 #include<string.h>
-// #include<cstring>
 #include<stdint.h>
 #include<WinSock2.h>
+#include<time.h>
+#include<chrono>
 using namespace std;
 
 #define BUFSIZE 8192 //缓冲区大小
@@ -11,7 +11,7 @@ using namespace std;
 #define ACK 1
 #define FIN 10
 
-#define SENTPACKSIZE 8192 //报文最大大小
+#define PACKDATASIZE 8192 //报文最大大小
 
 #define UDPHEADLEN 16 //bytes
 

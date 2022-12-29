@@ -70,6 +70,8 @@ int main(){
     int file_len = 0;
     char *file_data;
     int setoptres = -1;
+    auto start_time = std::chrono::high_resolution_clock::now();
+    auto end_time = std::chrono::high_resolution_clock::now();
 
     printf("[log] listening for client connect\n");
     int retlen = recvfrom(sockSrv, (char*)rpkg, sizeof(*rpkg), 0, (SOCKADDR*)&addrClient, &len); //收到客户端请求建连
@@ -101,6 +103,8 @@ int main(){
                     }
                     else{ //跳转至状态2传输文件，在2状态下不停发送，完毕后状态跳转
                         if (rpkg->FLAG == ACK){
+                            start_time = std::chrono::high_resolution_clock::now();
+
                             ack = (rpkg->seq + 1)%BUFSIZE;
                             printf("[log] client to server ACK, seq=%d, ack=%d\n", rpkg->seq, rpkg->ack);
                             state = 2;
@@ -124,7 +128,7 @@ int main(){
 
                     initUDPPackage(spkg);
                     spkg->seq = seq; seq = (seq+1)%BUFSIZE;
-                    spkg->Length = SENTPACKSIZE < (file_len - sent_offset) ? SENTPACKSIZE : (file_len - sent_offset); //传剩于文件大小和最大报文的较小值
+                    spkg->Length = PACKDATASIZE < (file_len - sent_offset) ? PACKDATASIZE : (file_len - sent_offset); //传剩于文件大小和最大报文的较小值
                     memcpy(spkg->data, file_data + sent_offset, spkg->Length);
                     sent_offset += (int)spkg->Length;
                     spkg->Checksum = checksumFunc(spkg,spkg->Length+UDPHEADLEN);
@@ -137,6 +141,7 @@ int main(){
                         CONNECT = false;
                         state = 0;
                     }
+                    Sleep(20);
                     state = 3;
                     //set socketopt timeout
                     // TODO: RTO计算
@@ -170,7 +175,7 @@ int main(){
 
                             initUDPPackage(spkg);
                             spkg->seq = rpkg->ack; //seq = (seq+1)%BUFSIZE;//重传
-                            spkg->Length = SENTPACKSIZE;
+                            spkg->Length = PACKDATASIZE;
                             sent_offset -= (int)spkg->Length; //回退file offset到上一次位置
                             memcpy(spkg->data, file_data + sent_offset, spkg->Length);
                             sent_offset += (int)spkg->Length;
@@ -205,7 +210,7 @@ int main(){
 
                         initUDPPackage(spkg);
                         spkg->seq = --seq; seq = (seq+1)%BUFSIZE;//重传
-                        spkg->Length = SENTPACKSIZE;
+                        spkg->Length = PACKDATASIZE;
                         sent_offset -= (int)spkg->Length; //回退file offset到上一次位置
                         memcpy(spkg->data, file_data + sent_offset, spkg->Length);
                         sent_offset += (int)spkg->Length;
@@ -268,6 +273,12 @@ int main(){
             }//switch
         }//while
     }//if
+
+    end_time = std::chrono::high_resolution_clock::now();
+    double time = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count();
+    printf("time=%fs\n",time/1e9);
+    printf("throughout=%fMB/s\n",(sent_offset*1.0/1048576.0)*1e9/time);
+
     system("pause");
     closesocket(sockSrv);
     wprintf(L"[log] server socket closed\n");

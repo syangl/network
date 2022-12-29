@@ -5,6 +5,8 @@
 #include <Windows.h>
 #include<atomic>
 #include<limits.h>
+#include <time.h>
+#include <chrono>
 using namespace std;
 //debug
 #define debug false

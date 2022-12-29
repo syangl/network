@@ -144,6 +144,8 @@ int main(){
     N = 1;
     st_launch = false;
     threadCnt = 0;
+    auto start_time = std::chrono::high_resolution_clock::now();
+    auto end_time = std::chrono::high_resolution_clock::now();
 
     //listening
     printf("[log] listening for client connect\n");
@@ -247,6 +249,8 @@ int main(){
                     else{
                         //跳转至状态2
                         if (rpkg->FLAG == ACK){
+                            start_time = std::chrono::high_resolution_clock::now();
+
                             ack = (rpkg->seq + 1)%SEQMAX;
                             printf("[log] client to server ACK, seq=%d, ack=%d\n", rpkg->seq, rpkg->ack);
                             state = 2;
@@ -461,10 +465,15 @@ int main(){
         }//while
     }//if
 
+    end_time = std::chrono::high_resolution_clock::now();
+
     while (threadCnt);
 
+    double time = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count();
+    printf("time=%fs\n",time/1e9);
     printf("[log] server to client file transmit done, FileLength=%fMB, TotalTransLength=%fMB\n",
                                 (file_len*1.0)/1048576.0, (sent_offset*1.0)/1048576.0);
+    printf("throughout=%fMB/s\n",(sent_offset*1.0/1048576.0)*1e9/time);
     delete[] file_data;
     system("pause");
     closesocket(sockSrv);
