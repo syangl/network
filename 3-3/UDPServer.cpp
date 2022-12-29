@@ -6,6 +6,9 @@
 #include<WinSock2.h>
 #include "UDPPackage.h"
 
+#define congestion_test true //设置为true有拥塞控制，false没有
+#define const_N 16 // 没有拥塞控制时的固定窗口大小
+
 using namespace std;
 SOCKET sockSrv;
 sockaddr_in addrClient;
@@ -137,11 +140,15 @@ int main(){
     launch = false;
     congCtrlState = SLOW_START;
     cwnd = 1.0;
-    rwnd = 64;
-    ssthresh = 64;
+    rwnd = 10;
+    ssthresh = 10;
     dupAckCnt = 0;
     buf_idx = 0;
-    N = 1;
+    #if congestion_test
+        N = 1;
+    #else
+        N = const_N;
+    #endif
     st_launch = false;
     threadCnt = 0;
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -316,16 +323,20 @@ int main(){
                                 resetTimer = true;
                             }
                             else{ /*重复ack*/
-                                ++dupAckCnt;
-                                if (dupAckCnt == 3){
-                                    dupAckCnt = 0;
-                                    ssthresh = (int)(cwnd / 2.0);
-                                    cwnd = cwnd + 3.0;
-                                    congCtrlState = FAST_RECOVERY;
-                                    // 快重传
-                                    buf_idx = (int)base;
-                                    resetTimer = true;
-                                }
+                                #if congestion_test
+                                    ++dupAckCnt;
+                                    if (dupAckCnt == 3){
+                                        dupAckCnt = 0;
+                                        ssthresh = (int)(cwnd / 2.0);
+                                        cwnd = ssthresh + 3.0;
+                                        congCtrlState = FAST_RECOVERY;
+                                        // 快重传
+                                        buf_idx = (int)base;
+                                        resetTimer = true;
+                                    }
+                                #else
+                                    // do nothing
+                                #endif
                             }
                         }
                         else if (congCtrlState == CONGESTION_AVOID){
@@ -364,16 +375,20 @@ int main(){
                                 resetTimer = true;
                             }
                             else{ /*重复ack*/
-                                ++dupAckCnt;
-                                if (dupAckCnt == 3){
-                                    dupAckCnt = 0;
-                                    ssthresh = (int)(cwnd / 2.0);
-                                    cwnd = cwnd + 3.0;
-                                    congCtrlState = FAST_RECOVERY;
-                                    // 快重传
-                                    buf_idx = (int)base;
-                                    resetTimer = true;
-                                }
+                                #if congestion_test
+                                    ++dupAckCnt;
+                                    if (dupAckCnt == 3){
+                                        dupAckCnt = 0;
+                                        ssthresh = (int)(cwnd / 2.0);
+                                        cwnd = ssthresh + 3.0;
+                                        congCtrlState = FAST_RECOVERY;
+                                        // 快重传
+                                        buf_idx = (int)base;
+                                        resetTimer = true;
+                                    }
+                                #else
+                                    // do nothing
+                                #endif
                             }
                         }
                         else if (congCtrlState == FAST_RECOVERY){
@@ -411,7 +426,11 @@ int main(){
                                 resetTimer = true;
                             }
                             else{ /*重复ack*/
-                                ++cwnd;
+                                #if congestion_test
+                                    ++cwnd;
+                                #else
+                                    // do nothing
+                                #endif
                             }
                         }
 
@@ -493,8 +512,11 @@ DWORD WINAPI sendThread(LPVOID lparam){
         if (!st_launch){
             continue;
         }
-
-        N = (int)((int)cwnd < (int)rwnd ? (int)cwnd : (int)rwnd);
+        #if congestion_test
+            N = (int)((int)cwnd < (int)rwnd ? (int)cwnd : (int)rwnd);
+        #else
+            N = const_N;
+        #endif
         if (buf_idx < (base + N)){//窗口滑动了
             UDPPackage *tmp = (UDPPackage *)(sendbuf + (buf_idx % BUFNUM) * PACKSIZE); //buf_idx start from 0
             //结束
@@ -517,7 +539,7 @@ DWORD WINAPI sendThread(LPVOID lparam){
             }
             buf_idx = buf_idx + 1;
 
-            Sleep(20);
+            Sleep(10);
         }//if
     }//while
     --threadCnt;
@@ -544,7 +566,11 @@ DWORD WINAPI timerOutThread(LPVOID lparam){
             dupAckCnt = 0;
             congCtrlState = SLOW_START;
             // resent
-            N = (int)((int)cwnd < (int)rwnd ? (int)cwnd : (int)rwnd);
+            #if congestion_test
+                N = (int)((int)cwnd < (int)rwnd ? (int)cwnd : (int)rwnd);
+            #else
+                N = const_N;
+            #endif
             for (int i = (int)base; i < (int)(base + N); ++i){
                 UDPPackage *tmp = (UDPPackage *)(sendbuf + (i % BUFNUM) * PACKSIZE);
                 // 结束
@@ -563,7 +589,7 @@ DWORD WINAPI timerOutThread(LPVOID lparam){
                     if (sendret < 0){
                             printf("[log TimerRoutine] send message error\n");
                     }
-                    Sleep(20);
+                    Sleep(10);
                 }
             }//for
 

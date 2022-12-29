@@ -8,7 +8,7 @@
 #include<windows.h>
 using namespace std;
 //滑动窗口大小N个报文，小于BUFNUM/2
-#define N 64
+#define N 10
 
 SOCKET sockClient;
 sockaddr_in addrSrv;
