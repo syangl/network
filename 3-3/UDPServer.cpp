@@ -141,7 +141,7 @@ int main(){
     congCtrlState = SLOW_START;
     cwnd = 1.0;
     rwnd = 10;
-    ssthresh = 10;
+    ssthresh = 5;
     dupAckCnt = 0;
     buf_idx = 0;
     #if congestion_test
@@ -286,11 +286,13 @@ int main(){
                     else{
                         if (congCtrlState == SLOW_START){
                             if (rpkg->ack >= (base + 1)){ // 已被确认，滑动窗口
-                                dupAckCnt = 0;
-                                ++cwnd;
-                                if ((int)cwnd >= (int)ssthresh){
-                                    congCtrlState = CONGESTION_AVOID;
-                                }
+                                #if congestion_test
+                                    dupAckCnt = 0;
+                                    ++cwnd;
+                                    if ((int)cwnd >= (int)ssthresh){
+                                        congCtrlState = CONGESTION_AVOID;
+                                    }
+                                #endif
 
                                 step_n = (rpkg->ack - base + BUFNUM) % BUFNUM;
                                 printf("[log recvThread] client to server ACK, ack=%d, now base=%d\n", rpkg->ack, (int)base);
@@ -341,9 +343,11 @@ int main(){
                         }
                         else if (congCtrlState == CONGESTION_AVOID){
                             if (rpkg->ack >= (base + 1)){ // 已被确认，滑动窗口
-                                dupAckCnt = 0;
-                                // 每个轮次加1
-                                cwnd += (1.0 / cwnd);
+                                #if congestion_test
+                                    dupAckCnt = 0;
+                                    // 每个轮次加1
+                                    cwnd += (1.0 / cwnd);
+                                #endif
 
                                 step_n = (rpkg->ack - base + BUFNUM) % BUFNUM;
                                 printf("[log recvThread] client to server ACK, ack=%d, now base=%d\n", rpkg->ack, (int)base);
@@ -394,8 +398,10 @@ int main(){
                         else if (congCtrlState == FAST_RECOVERY){
                             //congestionCtrlCnt = 0;
                             if (rpkg->ack >= (base + 1)){ // 已被确认，滑动窗口
-                                dupAckCnt = 0;
-                                congCtrlState = CONGESTION_AVOID;
+                                #if congestion_test
+                                    dupAckCnt = 0;
+                                    congCtrlState = CONGESTION_AVOID;
+                                #endif
 
                                 step_n = (rpkg->ack - base + BUFNUM) % BUFNUM;
                                 printf("[log recvThread] client to server ACK, ack=%d, now base=%d\n", rpkg->ack, (int)base);
@@ -560,11 +566,13 @@ DWORD WINAPI timerOutThread(LPVOID lparam){
             resetTimer = false;
         }
         if (clock() - start > RTO){
-            // congestion control
-            ssthresh = (int)(cwnd / 2);
-            cwnd = 1.0;
-            dupAckCnt = 0;
-            congCtrlState = SLOW_START;
+            #if congestion_test
+                // congestion control
+                ssthresh = (int)(cwnd / 2);
+                cwnd = 1.0;
+                dupAckCnt = 0;
+                congCtrlState = SLOW_START;
+            #endif
             // resent
             #if congestion_test
                 N = (int)((int)cwnd < (int)rwnd ? (int)cwnd : (int)rwnd);
